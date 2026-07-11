@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() &&
+             request.auth.token != null &&
+             'email' in request.auth.token &&
+             (request.auth.token.email == "kryptontechlk@gmail.com");
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() || (
+             isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             'role' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin"
+       );
+    }
+
+    function isEmailIgnoreCase(email1, email2) {
+      return email1 != null && email2 != null && email1 != "" && email2 != "" && email1.lower() == email2.lower();
+    }
+
+    function isParentEmailOwner(userId) {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(userId)) &&
+             'email' in get(/databases/$(database)/documents/users/$(userId)).data &&
+             (
+               (request.auth.token != null && 'email' in request.auth.token &&
+                isEmailIgnoreCase(get(/databases/$(database)/documents/users/$(userId)).data.email, request.auth.token.email))
+               ||
+               (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+                'email' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data &&
+                isEmailIgnoreCase(get(/databases/$(database)/documents/users/$(userId)).data.email, get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email))
+             );
+    }
+
+    // Users Collection rules
+    match /users/{userId} {
+      allow read, list: if isSignedIn();
+      allow create, update: if isOwner(userId) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin() || isParentEmailOwner(userId);
+    }
+
+    // Profiles Subcollection rules
+    match /users/{userId}/profile/{profileId} {
+      allow read: if true;
+      allow write: if isOwner(userId) || isAdmin() || isParentEmailOwner(userId);
+    }
+
+    // Products Subcollection rules
+    match /users/{userId}/products/{productId} {
+      allow read: if true;
+      allow write: if isOwner(userId) || isAdmin() || isParentEmailOwner(userId);
+    }
+
+    // Invoices Subcollection rules
+    match /users/{userId}/invoices/{invoiceId} {
+      allow get: if true;
+      allow list: if isOwner(userId) || isAdmin() || isParentEmailOwner(userId);
+      allow write: if isOwner(userId) || isAdmin() || isParentEmailOwner(userId);
+    }
+
+    // Quotations Subcollection rules
+    match /users/{userId}/quotations/{quotationId} {
+      allow get: if true;
+      allow create: if true;
+      allow list, update, delete: if isOwner(userId) || isAdmin() || isParentEmailOwner(userId);
+    }
+
+    // Top-level Invoices Collection (fallback/support)
+    match /invoices/{invoiceId} {
+      allow read: if true;
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "User": {
+      "title": "UserProfile",
+      "description": "User profile with role, status and subscription status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique Firebase Authentication UID" },
+        "email": { "type": "string", "description": "Email address of the user" },
+        "displayName": { "type": "string", "description": "Full name or display name of the user" },
+        "role": { "type": "string", "enum": ["admin", "staff"], "description": "System privilege role" },
+        "status": { "type": "string", "enum": ["active", "inactive", "Active", "Inactive"], "description": "User clearance status" },
+        "password": { "type": "string", "description": "Plain password for multi-operator simulated auth overrides" },
+        "subscriptionPlan": { "type": "string", "enum": ["free", "basic", "premium", "enterprise"] },
+        "subscriptionStatus": { "type": "string", "enum": ["active", "expired", "trialing", "unpaid", "Active", "Expired"] },
+        "subscriptionExpiresAt": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "status"]
+    },
+    "CompanyProfile": {
+      "title": "CompanyProfile",
+      "description": "Store configuration blueprint",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "logo": { "type": "string" },
+        "phone": { "type": "string" },
+        "invoicePrefix": { "type": "string" },
+        "nextInvoiceNumber": { "type": "number" },
+        "signature": { "type": "string" },
+        "signatureTitle": { "type": "string" },
+        "defaultTermsAndConditions": { "type": "string", "description": "Default terms and conditions appended to invoices and quotations" }
+      },
+      "required": ["name"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Billing product details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "price": { "type": "number" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "name", "price"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Saved customer invoice document",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "date": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerAddress": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "deliveryCharges": { "type": "number" },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "final"] },
+        "notes": { "type": "string", "description": "Terms and conditions or custom notes" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "invoiceNumber", "date", "customerName", "total", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User account registration with dynamic access controls"
+    },
+    "/users/{userId}/profile/store_details": {
+      "schema": "CompanyProfile",
+      "description": "Company profile configuration printed on invoices"
+    },
+    "/users/{userId}/products/{productId}": {
+      "schema": "Product",
+      "description": "Products inventory catalog"
+    },
+    "/users/{userId}/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Saved customer invoice documents and drafts"
+    }
+  }
+}

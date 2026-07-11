@@ -1,0 +1,117 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@variant dark (&:where(.dark, .dark *));
+
+/* Custom shadow effects for a premium look */
+.premium-shadow {
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 8px -1px rgba(0, 0, 0, 0.03);
+}
+
+.premium-shadow-hover {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.premium-shadow-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.08), 0 4px 12px -2px rgba(0, 0, 0, 0.04);
+}
+
+/* Print Styling for the invoice */
+@media print {
+  /* Set document backgrounds to white and clear other layouts */
+  body, html, #root {
+    background-color: white !important;
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* 
+    BULLETPROOF VISIBILITY PRINT ISOLATION:
+    We hide all elements in the DOM during a print, except for our target invoice document card (#invoice-document).
+    This ensures that background list tables, dialog shadows, close buttons, headers, sidebars, and overlays 
+    are completely invisible, and only the pure, crisp invoice is printed.
+  */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Make the invoice document and all its inner components visible */
+  #invoice-document, #invoice-document * {
+    visibility: visible !important;
+  }
+
+  /* Break the invoice document out of modal/overlay layouts and stretch to fill printable page */
+  #invoice-document {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 10px !important;
+    margin: 0 !important;
+    background: white !important;
+    color: black !important;
+    border-radius: 0 !important;
+  }
+
+  /* Reset layout constraints on ancestors so they don't clip the printed element */
+  main, .min-h-screen, .max-w-7xl, .max-w-4xl, .fixed, .inset-0, .overflow-y-auto, .overflow-hidden {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    position: static !important;
+    transform: none !important;
+  }
+
+  /* Hide specific browser print-only components */
+  .no-print, header, footer, nav, button, [role="alert"], .fixed.top-5.right-5 {
+    display: none !important;
+  }
+
+  /* Prevent page breaks inside table rows */
+  tr {
+    page-break-inside: avoid !important;
+  }
+
+  /* Disable overflow boundaries from clipping tables */
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  /* Table layout breaks */
+  table {
+    page-break-inside: auto;
+  }
+
+  /* Define standard page portrait margins */
+  @page {
+    size: portrait;
+    margin: 15mm;
+  }
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Krypton view",
+  "description": "A simple and powerful bill and invoice generator with profile management, product master records, interactive billing forms, and saved invoice history.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
