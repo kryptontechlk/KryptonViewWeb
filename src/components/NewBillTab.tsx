@@ -4,7 +4,7 @@ import { CompanyProfile, Product, Invoice, InvoiceItem, InvoiceCustomField, Prod
 import InvoiceDocument from './InvoiceDocument';
 import MobileA4ScaledPreview from './MobileA4ScaledPreview';
 import { downloadInvoiceAsPdf, getInvoicePdfFile } from '../utils/pdfGenerator';
-import { getGmailComposeLink, formatInvoiceMessage } from '../utils/mailHelper';
+import { getGmailComposeLink, formatInvoiceMessage, getWhatsAppLink, cleanSriLankanPhoneNumber } from '../utils/mailHelper';
 import { 
   Plus, 
   Trash, 
@@ -27,7 +27,8 @@ import {
   AlertCircle,
   Mail,
   MessageSquare, // Share bill via WhatsApp
-  CalendarRange
+  CalendarRange,
+  ShieldCheck
 } from 'lucide-react';
 
 interface NewBillTabProps {
@@ -80,6 +81,7 @@ export default function NewBillTab({
   const [selectedColor, setSelectedColor] = useState('');
   const [selectedQty, setSelectedQty] = useState(1);
   const [customPrice, setCustomPrice] = useState<number>(0);
+  const [useDiscount, setUseDiscount] = useState<boolean>(false);
   const [tempCustomFields, setTempCustomFields] = useState<ProductCustomField[]>([]);
 
   // Invoice pricing multipliers
@@ -94,6 +96,7 @@ export default function NewBillTab({
   const [invoiceExtraFields, setInvoiceExtraFields] = useState<InvoiceCustomField[]>([]);
   const [extraFieldKey, setExtraFieldKey] = useState('');
   const [extraFieldValue, setExtraFieldValue] = useState('');
+  const [extraFieldQty, setExtraFieldQty] = useState<number>(1);
 
   // Dynamic Sequential References
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -176,14 +179,20 @@ export default function NewBillTab({
   // Sync pricing configurations on catalog selection
   useEffect(() => {
     if (selectedProduct) {
-      setCustomPrice(selectedProduct.price);
+      if (selectedProduct.discountedPrice && selectedProduct.discountedPrice > 0) {
+        setCustomPrice(selectedProduct.discountedPrice);
+        setUseDiscount(true);
+      } else {
+        setCustomPrice(selectedProduct.price);
+        setUseDiscount(false);
+      }
       setSelectedQty(1);
       if (selectedProduct.colors && selectedProduct.colors.length > 0) {
         setSelectedColor(selectedProduct.colors[0]);
       } else {
         setSelectedColor('Default');
       }
-      setTempCustomFields(selectedProduct.customFields.map(f => ({ ...f })));
+      setTempCustomFields((selectedProduct.customFields || []).map(f => ({ ...f })));
     }
   }, [selectedProduct]);
 
@@ -205,6 +214,11 @@ export default function NewBillTab({
       selectedColor: selectedColor,
       quantity: selectedQty,
       customFields: [...tempCustomFields],
+      originalPrice: selectedProduct.price,
+      discountedPrice: selectedProduct.discountedPrice,
+      useDiscount: useDiscount && !!selectedProduct.discountedPrice && selectedProduct.discountedPrice > 0,
+      purchasePrice: selectedProduct.purchasePrice || 0,
+      isService: selectedProduct.isService || false,
     };
 
     setBillingItems([...billingItems, newItem]);
@@ -212,6 +226,7 @@ export default function NewBillTab({
     // Reset product selection bench
     setSelectedProduct(null);
     setSearchQuery('');
+    setUseDiscount(false);
     triggerToast("Item added to bill sheet", "success");
   };
 
@@ -228,12 +243,14 @@ export default function NewBillTab({
       id: crypto.randomUUID(),
       key: extraFieldKey.trim(),
       value: extraFieldValue.trim(),
+      quantity: extraFieldQty > 0 ? extraFieldQty : 1,
     };
 
     setInvoiceExtraFields([...invoiceExtraFields, newField]);
     setExtraFieldKey('');
     setExtraFieldValue('');
-    triggerToast("Added custom invoice field", "success");
+    setExtraFieldQty(1);
+    triggerToast(`Added custom ${billingMode} field`, "success");
   };
 
   const handleRemoveExtraField = (id: string) => {
@@ -241,6 +258,19 @@ export default function NewBillTab({
   };
 
 // Pricing aggregations
+  const totalOriginalSubtotal = billingItems.reduce((acc, item) => {
+    const orig = typeof item.originalPrice === 'number' ? item.originalPrice : item.price;
+    return acc + (orig * item.quantity);
+  }, 0);
+
+  const totalProductDiscount = billingItems.reduce((acc, item) => {
+    if (item.useDiscount && typeof item.originalPrice === 'number') {
+      const diff = Math.max(0, item.originalPrice - item.price);
+      return acc + (diff * item.quantity);
+    }
+    return acc;
+  }, 0);
+
   const subtotal = billingItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
   const discountAmount = discountType === 'percentage' 
     ? (subtotal * (discountValue / 100)) 
@@ -271,6 +301,8 @@ export default function NewBillTab({
       total: grandTotal,
       status: finalStatus,
       notes,
+      totalOriginalSubtotal,
+      totalProductDiscount,
     };
   };
 
@@ -297,6 +329,8 @@ export default function NewBillTab({
       status: finalStatus,
       notes,
       validUntil: validUntil || undefined,
+      totalOriginalSubtotal,
+      totalProductDiscount,
     };
   };
 
@@ -429,6 +463,17 @@ export default function NewBillTab({
       // Auto-save a draft into master records only if they have actually added bill items and status is not 'final'
       if (current.billingItems.length > 0 && current.status !== 'final') {
         const sub = current.billingItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+        const draftOriginalSubtotal = current.billingItems.reduce((acc, item) => {
+          const orig = typeof item.originalPrice === 'number' ? item.originalPrice : item.price;
+          return acc + (orig * item.quantity);
+        }, 0);
+        const draftProductDiscount = current.billingItems.reduce((acc, item) => {
+          if (item.useDiscount && typeof item.originalPrice === 'number') {
+            const diff = Math.max(0, item.originalPrice - item.price);
+            return acc + (diff * item.quantity);
+          }
+          return acc;
+        }, 0);
         const discAmt = current.discountType === 'percentage' 
           ? (sub * (current.discountValue / 100)) 
           : current.discountValue;
@@ -456,6 +501,8 @@ export default function NewBillTab({
           total: totalSum,
           status: 'draft', // Forced to be draft saved when switching tabs
           notes: current.notes,
+          totalOriginalSubtotal: draftOriginalSubtotal,
+          totalProductDiscount: draftProductDiscount,
         };
         current.onSaveInvoice(autoSavedDraft);
       }
@@ -563,13 +610,14 @@ export default function NewBillTab({
     }
   };
 
-  const handleEmailInvoiceViaGmail = async () => {
+  const handleEmailInvoiceViaGmail = () => {
     if (billingItems.length === 0) {
       triggerToast("Draft represents an empty list. Insert items first.", "error");
       return;
     }
     let invoiceData: Invoice;
-    if (billingMode === 'quotation') {
+    const isQuote = billingMode === 'quotation';
+    if (isQuote) {
       const quotationData = compileQuotation('final');
       onSaveQuotation(quotationData);
       invoiceData = quotationData as unknown as Invoice;
@@ -583,7 +631,7 @@ export default function NewBillTab({
 
     let recipient = defaultEmail.trim();
     if (!recipient) {
-      const promptedRecipient = prompt("Please enter the customer's Email address to send this bill:");
+      const promptedRecipient = prompt(`Please enter the customer's Email address to send this ${isQuote ? 'quotation' : 'bill'}:`);
       if (promptedRecipient === null) return;
       recipient = promptedRecipient.trim();
     }
@@ -593,37 +641,17 @@ export default function NewBillTab({
       return;
     }
 
-    const subject = `Invoice ${invoiceData.invoiceNumber} from ${profile.name || 'Our Store'}`;
+    const docNum = invoiceData.invoiceNumber || (invoiceData as any).quotationNumber || 'Document';
+    const prefix = isQuote ? 'Quotation' : 'Invoice';
+    const subject = `${prefix} ${docNum} from ${profile.name || 'Our Store'}`;
     const body = formatInvoiceMessage(invoiceData, profile.name, profile.phone);
 
-    // A. Native Share API check (includes direct PDF attachment)
-    if (navigator.canShare) {
-      try {
-        triggerToast("Preparing official invoice file for sharing...", "info");
-        const file = await getInvoicePdfFile(invoiceData, 'invoice-document');
-        if (file && navigator.canShare({ files: [file] })) {
-          const useNativeShare = confirm("Would you like to attach the invoice PDF automatically using your device's native sharing card? (Perfect for mobile Gmail, WhatsApp, and Outlook app sharing!)");
-          if (useNativeShare) {
-            await navigator.share({
-              files: [file],
-              title: subject,
-              text: body,
-            });
-            triggerToast("Invoice PDF attached and sent successfully!", "success");
-            return;
-          }
-        }
-      } catch (shareErr) {
-        console.warn("Native share dismissed or failed:", shareErr);
-      }
-    }
+    // Copy body to clipboard as a helpful backup non-blockingly
+    navigator.clipboard.writeText(body)
+      .then(() => triggerToast("Summary text copied to clipboard as a backup!", "success"))
+      .catch(clipErr => console.warn("Could not copy backup text to clipboard automatically:", clipErr));
 
     const useGmail = confirm("Press OK to compose using Gmail Web interface.\nPress Cancel to use your device's Default Mail Client (Outlook, Apple Mail, etc.).");
-
-    triggerToast("Generating/downloading invoice PDF & launching mail compose channel...", "info");
-    
-    // Auto-trigger clean background PDF compile & download so they have the file ready to attach
-    await downloadInvoiceAsPdf(invoiceData, 'invoice-document');
 
     let link = '';
     if (useGmail) {
@@ -632,33 +660,36 @@ export default function NewBillTab({
       link = `mailto:${encodeURIComponent(recipient.trim())}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     }
     
-    // Bypass iframe popup block by using dynamic anchor link
+    // Bypass iframe popup block by using dynamic anchor link synchronously
     try {
       const linkAnchor = document.createElement('a');
       linkAnchor.href = link;
-      linkAnchor.target = '_blank';
-      linkAnchor.rel = 'noopener noreferrer';
+      if (useGmail) {
+        linkAnchor.target = '_blank';
+        linkAnchor.rel = 'noopener noreferrer';
+      }
       document.body.appendChild(linkAnchor);
       linkAnchor.click();
       document.body.removeChild(linkAnchor);
-      triggerToast("Mail compose opened! Please select the downloaded invoice PDF from your computer/device's folder.", "success");
+      triggerToast("Mail compose opened!", "success");
     } catch (popupErr) {
       console.error(popupErr);
-      const confirmCopy = confirm("Your browser blocked opening your email app. Copy compose URL link directly to clipboard?");
-      if (confirmCopy) {
-        navigator.clipboard.writeText(link);
-        triggerToast("Copied email link to clipboard!", "success");
-      }
+      navigator.clipboard.writeText(link);
+      triggerToast("Gmail open request sent!", "success");
     }
+
+    // Compile and download PDF in background asynchronously
+    downloadInvoiceAsPdf(invoiceData, 'invoice-document').catch(err => console.warn(err));
   };
 
-  const handleShareWhatsApp = async () => {
+  const handleShareWhatsApp = () => {
     if (billingItems.length === 0) {
       triggerToast("Draft represents an empty list. Insert items first.", "error");
       return;
     }
     let invoiceData: Invoice;
-    if (billingMode === 'quotation') {
+    const isQuote = billingMode === 'quotation';
+    if (isQuote) {
       const quotationData = compileQuotation('final');
       onSaveQuotation(quotationData);
       invoiceData = quotationData as unknown as Invoice;
@@ -670,7 +701,7 @@ export default function NewBillTab({
     const whatsappNumber = customerWhatsapp || customerPhone;
     let recipient = whatsappNumber ? whatsappNumber.trim() : '';
     if (!recipient) {
-      const promptedRecipient = prompt("Please enter the customer's WhatsApp number (with country code, e.g. 94771234567 or 12125550199):");
+      const promptedRecipient = prompt("Please enter the customer's WhatsApp number (e.g., 0771234567 or with country code, e.g., 94771234567):");
       if (promptedRecipient === null) return;
       recipient = promptedRecipient.trim();
     }
@@ -680,46 +711,17 @@ export default function NewBillTab({
       return;
     }
 
-    let cleanedPhone = recipient.trim().replace(/[^0-9]/g, '');
-    
-    // Auto-formatting for local Sri Lankan numbering in context of LKR currency
-    if (cleanedPhone.startsWith('0') && cleanedPhone.length === 10) {
-      cleanedPhone = '94' + cleanedPhone.substring(1);
-    }
-
+    const cleanedPhone = cleanSriLankanPhoneNumber(recipient);
     const message = formatInvoiceMessage(invoiceData, profile.name, profile.phone);
 
-    // A. Native Share API check (includes direct PDF attachment)
-    if (navigator.canShare) {
-      try {
-        triggerToast("Compiling official invoice PDF file...", "info");
-        const file = await getInvoicePdfFile(invoiceData, 'invoice-document');
-        if (file && navigator.canShare({ files: [file] })) {
-          const useNativeShare = confirm("Would you like to attach the invoice PDF automatically to WhatsApp using your device's native sharing card?");
-          if (useNativeShare) {
-            await navigator.share({
-              files: [file],
-              title: `Invoice ${invoiceData.invoiceNumber}`,
-              text: message,
-            });
-            triggerToast("Successfully shared via WhatsApp!", "success");
-            return;
-          }
-        }
-      } catch (shareErr) {
-        console.warn("Native sharing dismissed or failed:", shareErr);
-      }
-    }
+    // Copy to clipboard non-blockingly
+    navigator.clipboard.writeText(message)
+      .then(() => triggerToast("Summary copied to clipboard as backup!", "success"))
+      .catch(clipErr => console.warn("Clipboard copy failed:", clipErr));
 
-    // B. Direct WhatsApp WA.me URL Fallback (downloads PDF automatically to let the user select it)
-    triggerToast("Compiling invoice PDF and launching WhatsApp message channel...", "info");
-
-    // Automatically trigger local PDF download so they can attach it easily from downloads folder
-    await downloadInvoiceAsPdf(invoiceData, 'invoice-document');
-
-    const waLink = `https://wa.me/${cleanedPhone}?text=${encodeURIComponent(message)}`;
+    const waLink = getWhatsAppLink(cleanedPhone, message);
     
-    // Bypass iframe popup block by using dynamic anchor link
+    // Open WhatsApp instantly/synchronously
     try {
       const linkAnchor = document.createElement('a');
       linkAnchor.href = waLink;
@@ -728,15 +730,14 @@ export default function NewBillTab({
       document.body.appendChild(linkAnchor);
       linkAnchor.click();
       document.body.removeChild(linkAnchor);
-      triggerToast("WhatsApp opened! You can now attach the newly downloaded PDF from your device's files.", "success");
+      triggerToast("Opening WhatsApp...", "success");
     } catch (popupErr) {
-      console.error(popupErr);
-      const confirmCopy = confirm("Popup opening seemed to have failed or was blocked. Copy WhatsApp link directly to clipboard?");
-      if (confirmCopy) {
-        navigator.clipboard.writeText(waLink);
-        triggerToast("WhatsApp sharing link copied to clipboard!", "success");
-      }
+      console.error("WhatsApp popup failed:", popupErr);
+      window.open(waLink, '_blank');
     }
+
+    // Download PDF in the background
+    downloadInvoiceAsPdf(invoiceData, 'invoice-document').catch(err => console.warn("Background PDF generation failed:", err));
   };
 
   const handleCancelEditing = () => {
@@ -756,6 +757,7 @@ export default function NewBillTab({
     setCustFieldValue('');
     setBillingItems([]);
     setInvoiceExtraFields([]);
+    setExtraFieldQty(1);
     setDiscountValue(0);
     setDeliveryCharges(0);
     setCustomCharges([]);
@@ -1240,6 +1242,31 @@ export default function NewBillTab({
               )}
             </div>
 
+            <div className="flex justify-between items-center px-1">
+              <span className="text-[10px] text-slate-400">Can't find a product in catalog?</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const customName = searchQuery.trim() || "Custom Item / Charge";
+                  setSelectedProduct({
+                    id: 'custom-' + Date.now(),
+                    name: customName,
+                    code: 'CUSTOM',
+                    price: 0,
+                    colors: [],
+                    customFields: []
+                  });
+                  setCustomPrice(0);
+                  setSelectedQty(1);
+                  setTempCustomFields([]);
+                }}
+                className="text-[10px] text-indigo-600 hover:text-indigo-800 font-extrabold flex items-center gap-0.5 cursor-pointer uppercase tracking-wider"
+              >
+                <Plus size={10} className="stroke-[3]" />
+                <span>Add Custom Line Item</span>
+              </button>
+            </div>
+
             {/* Override product settings block */}
             {selectedProduct && (
               <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-3 animate-fade-in text-xs">
@@ -1256,6 +1283,44 @@ export default function NewBillTab({
                     Cancel
                   </button>
                 </div>
+
+                {selectedProduct.id.startsWith('custom-') && (
+                  <div className="animate-fade-in">
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Custom Item Description / Name
+                    </label>
+                    <input
+                      type="text"
+                      value={selectedProduct.name}
+                      onChange={(e) => setSelectedProduct({ ...selectedProduct, name: e.target.value })}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 focus:border-indigo-500 rounded-xl text-xs font-semibold outline-none text-slate-700 h-9"
+                    />
+                  </div>
+                )}
+
+                {selectedProduct.discountedPrice && selectedProduct.discountedPrice > 0 ? (
+                  <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900 rounded-xl flex items-center justify-between gap-3 animate-fade-in">
+                    <div>
+                      <span className="block text-[10px] font-extrabold text-emerald-800 dark:text-emerald-450 uppercase tracking-wider">Catalog Discount Available</span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                        Original: <span className="line-through font-mono">LKR {selectedProduct.price.toFixed(2)}</span> → Discounted: <span className="font-extrabold font-mono">LKR {selectedProduct.discountedPrice.toFixed(2)}</span>
+                      </span>
+                    </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
+                      <input 
+                        type="checkbox" 
+                        checked={useDiscount}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setUseDiscount(checked);
+                          setCustomPrice(checked ? selectedProduct.discountedPrice! : selectedProduct.price);
+                        }}
+                        className="rounded border-emerald-300 text-emerald-650 focus:ring-emerald-500 h-3.5 w-3.5"
+                      />
+                      <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-400">Apply</span>
+                    </label>
+                  </div>
+                ) : null}
 
                 <div className={`grid grid-cols-1 ${selectedProduct.colors && selectedProduct.colors.length > 0 && selectedProduct.colors.some(c => c && !['default', 'none', 'default/none', 'default / none', 'default / none'].includes(c.toLowerCase().trim())) ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5`}>
                   {/* Color choose input */}
@@ -1370,9 +1435,9 @@ export default function NewBillTab({
                         )}
                       </div>
                       
-                      {item.customFields.length > 0 && (
+                      {(item.customFields || []).length > 0 && (
                         <div className="flex flex-wrap gap-2 mt-1">
-                          {item.customFields.map((f) => f.value && (
+                          {(item.customFields || []).map((f) => f.value && (
                             <span key={f.id} className="text-[9px] font-bold text-slate-400 uppercase">
                               {f.name}: <span className="text-slate-650 font-sans font-medium hover:text-slate-800">{f.value}</span>
                             </span>
@@ -1402,6 +1467,43 @@ export default function NewBillTab({
                 </div>
               )}
             </div>
+
+            {billingItems.length > 0 && (
+              <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-xl sm:rounded-2xl p-4 sm:p-5 shadow-lg space-y-3 border border-slate-800 animate-fade-in no-print">
+                <div className="flex justify-between items-center border-b border-white/10 pb-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-250 flex items-center gap-1">
+                    <ShieldCheck size={11} className="text-emerald-400" />
+                    <span>Business Margin Analyzer (Admin Only)</span>
+                  </span>
+                  <span className="text-[8px] bg-emerald-500/20 text-emerald-400 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    Secured
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-4 text-xs font-medium">
+                  <div>
+                    <span className="block text-[9.5px] text-slate-400 uppercase tracking-wider mb-0.5">Estimated Cost</span>
+                    <span className="text-[14px] font-mono font-extrabold text-slate-200">
+                      LKR {billingItems.reduce((acc, item) => acc + ((item.purchasePrice || 0) * item.quantity), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[9.5px] text-slate-400 uppercase tracking-wider mb-0.5">Projected Net Profit</span>
+                    <span className={`text-[14px] font-mono font-extrabold ${grandTotal - billingItems.reduce((acc, item) => acc + ((item.purchasePrice || 0) * item.quantity), 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      LKR {(grandTotal - billingItems.reduce((acc, item) => acc + ((item.purchasePrice || 0) * item.quantity), 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-white/10 flex justify-between items-center">
+                  <span className="text-[9.5px] text-slate-400 uppercase">Gross Profit Margin:</span>
+                  <span className={`text-xs font-mono font-extrabold ${grandTotal - billingItems.reduce((acc, item) => acc + ((item.purchasePrice || 0) * item.quantity), 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {(grandTotal > 0 ? ((grandTotal - billingItems.reduce((acc, item) => acc + ((item.purchasePrice || 0) * item.quantity), 0)) / grandTotal) * 100 : 0).toFixed(1)}%
+                  </span>
+                </div>
+                <p className="text-[8.5px] text-slate-400 leading-relaxed italic">
+                  Note: This financial margin analysis is strictly displayed within your secure operator portal. It will never be rendered on any customer PDF outputs, sharing links, or printouts.
+                </p>
+              </div>
+            )}
 
             {/* Apply Multiplier Discount */}
             <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-100 p-4 sm:p-5 premium-shadow space-y-2.5">
@@ -1550,13 +1652,15 @@ export default function NewBillTab({
               </div>
             </div>
 
-            {/* Add Custom Invoice Fields */}
+                        {/* Add Custom Invoice / Quotation Fields */}
             <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-100 p-4 sm:p-5 premium-shadow space-y-3">
               <div className="flex items-center gap-2 pb-2 border-b border-slate-50 flex-wrap">
                 <span className="p-1 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
                   <FileSignature size={13} />
                 </span>
-                <h3 className="text-xs font-display font-bold text-slate-800 uppercase tracking-wider">Add Custom Invoice Fields</h3>
+                <h3 className="text-xs font-display font-bold text-slate-800 uppercase tracking-wider">
+                  {billingMode === 'quotation' ? 'Add Custom Quotation Fields' : 'Add Custom Invoice Fields'}
+                </h3>
               </div>
 
               {invoiceExtraFields.length > 0 && (
@@ -1565,7 +1669,9 @@ export default function NewBillTab({
                     <div key={field.id} className="flex justify-between items-center text-xs bg-slate-50 border border-slate-100 px-2.5 py-1.5 rounded-xl">
                       <div className="min-w-0 pr-1.5">
                         <span className="font-bold text-indigo-600 uppercase text-[8px] block tracking-wider">{field.key}</span>
-                        <span className="text-slate-700 truncate block font-semibold text-[10px]">{field.value}</span>
+                        <span className="text-slate-700 truncate block font-semibold text-[10px]">
+                          {field.value} {field.quantity && field.quantity > 1 ? `(Qty: ${field.quantity})` : ''}
+                        </span>
                       </div>
                       <button
                         type="button"
@@ -1582,22 +1688,32 @@ export default function NewBillTab({
               <form onSubmit={handleAddExtraField} className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
-                  placeholder="Label (e.g. Payment)"
+                  placeholder="Label (e.g. Serial #)"
                   value={extraFieldKey}
                   onChange={(e) => setExtraFieldKey(e.target.value)}
-                  className="flex-1 min-w-0 px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-xs outline-none h-9"
+                  className="flex-2 min-w-0 px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-xs outline-none h-9"
                 />
                 <input
                   type="text"
-                  placeholder="Value (e.g. Card)"
+                  placeholder="Value (e.g. 98765)"
                   value={extraFieldValue}
                   onChange={(e) => setExtraFieldValue(e.target.value)}
-                  className="flex-1 min-w-0 px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-xs outline-none h-9"
+                  className="flex-2 min-w-0 px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-xs outline-none h-9"
                 />
+                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 h-9 shrink-0 w-24">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase font-mono">Qty:</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={extraFieldQty}
+                    onChange={(e) => setExtraFieldQty(Math.max(1, Number(e.target.value)))}
+                    className="w-full bg-transparent text-xs text-center font-bold text-slate-800 outline-none p-0 border-none"
+                  />
+                </div>
                 <button
                   type="submit"
                   disabled={!extraFieldKey.trim() || !extraFieldValue.trim()}
-                  className="px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-sm transition disabled:opacity-50 cursor-pointer h-9"
+                  className="px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-sm transition disabled:opacity-50 cursor-pointer h-9 shrink-0"
                 >
                   <Plus size={13} />
                   <span>Add Field</span>
@@ -1632,7 +1748,7 @@ export default function NewBillTab({
           </div>
 
           {/* Desktop Sidebar: Sticky Live Printable layout view */}
-          <div className="xl:col-span-6 w-full sticky top-4 print:static print:w-full print:p-0 print:m-0 pb-8">
+          <div className="hidden xl:block xl:col-span-6 w-full sticky top-4 print:static print:w-full print:p-0 print:m-0 pb-8">
             <div className="mb-3 flex items-center justify-between no-print px-1">
               <span className="text-[10px] p-0 font-display font-extrabold text-slate-400 uppercase tracking-widest">
                 Document Blueprint Sheet
@@ -1649,6 +1765,87 @@ export default function NewBillTab({
             />
           </div>
 
+        </div>
+
+        {/* Bottom Grid Actions (Duplicate of Top Actions for easy accessibility) */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 no-print border-t border-slate-150 pt-6 mt-6 pb-4">
+          <div>
+            <h3 className="text-xs font-display font-black text-slate-800 uppercase tracking-wider">Workspace Actions</h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">Quickly save, print, download, or share your document from the bottom of the page.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto mt-1 md:mt-0">
+            <button
+              onClick={handleResetForm}
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 text-xs transition cursor-pointer h-9"
+            >
+              <Undo2 size={13} />
+              <span className="hidden sm:inline">Clear Workbench</span>
+              <span className="sm:hidden">Clear</span>
+            </button>
+            
+            <button
+              onClick={handleSaveDraft}
+              disabled={billingItems.length === 0}
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white rounded-xl font-bold text-xs transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer h-9"
+              title="Saves this document as a draft which can be reloaded to revise later"
+            >
+              <Save size={13} />
+              <span className="hidden sm:inline">Save Draft</span>
+              <span className="sm:hidden">Draft</span>
+            </button>
+
+            <button
+              onClick={handleSaveFinal}
+              disabled={billingItems.length === 0}
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold text-xs transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer h-9"
+              title="Finalizes and locks billing data block"
+            >
+              <CheckCircle2 size={13} />
+              <span className="hidden sm:inline">{billingMode === 'quotation' ? 'Save Final Quotation' : 'Save Final Bill'}</span>
+              <span className="sm:hidden">Save Final</span>
+            </button>
+
+            <button
+              onClick={handleDownloadPDF}
+              disabled={billingItems.length === 0 || isPdfDownloading}
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer h-9"
+            >
+              <Download size={13} />
+              <span>{isPdfDownloading ? "PDF..." : "PDF"}</span>
+            </button>
+
+            <button
+              onClick={handleEmailInvoiceViaGmail}
+              disabled={billingItems.length === 0}
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-1 bg-indigo-55 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 rounded-xl font-bold text-xs transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer h-9"
+              title="Compose and send this bill directly to customer's Gmail"
+            >
+              <Mail size={13} strokeWidth={2.5} />
+              <span className="hidden sm:inline">{billingMode === 'quotation' ? 'Email Quotation' : 'Email Bill'}</span>
+              <span className="sm:hidden">Email</span>
+            </button>
+
+            <button
+              onClick={handleShareWhatsApp}
+              disabled={billingItems.length === 0}
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-1 bg-emerald-55 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 rounded-xl font-bold text-xs transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer h-9"
+              title="Send this invoice and access link to customer's WhatsApp"
+            >
+              <MessageSquare size={13} strokeWidth={2.5} />
+              <span className="hidden sm:inline">{billingMode === 'quotation' ? 'WhatsApp Quotation' : 'WhatsApp Bill'}</span>
+              <span className="sm:hidden">WhatsApp</span>
+            </button>
+
+            <button
+              onClick={handlePrintDraft}
+              disabled={billingItems.length === 0}
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer h-9"
+            >
+              <Printer size={13} />
+              <span className="hidden sm:inline">{billingMode === 'quotation' ? 'Print Quotation' : 'Print Invoice'}</span>
+              <span className="sm:hidden">Print</span>
+            </button>
+          </div>
         </div>
 
         {/* Mobile Floating Action Button to toggle sheet preview */}

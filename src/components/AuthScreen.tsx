@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types';
-import { isFirebaseConfigured, auth, db } from '../lib/firebase';
+import { isFirebaseConfigured, auth, db, cleanUndefined } from '../lib/firebase';
 import { signInWithPopup, signInWithRedirect, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, updatePassword } from 'firebase/auth';
 import { doc, setDoc, getDoc, getDocs, collection, query, where, deleteDoc } from 'firebase/firestore';
 import { ReceiptText, KeyRound, ShieldAlert, Check, Mail, ChevronRight, Compass, Eye, EyeOff, HelpCircle, ExternalLink, ChevronDown } from 'lucide-react';
@@ -317,7 +317,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
           userProfile = mergedProfile;
           
           // Write down the reconciled merged master document under the real authenticated UID first
-          await setDoc(userRef, userProfile);
+          await setDoc(userRef, cleanUndefined(userProfile));
 
           // Purge the remaining duplicates from Firestore safely (to avoid duplicate rows going forward)
           for (const dupId of duplicateDocIds) {
@@ -347,7 +347,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString()
             };
-            await setDoc(userRef, userProfile);
+            await setDoc(userRef, cleanUndefined(userProfile));
           } else {
             await signOut(auth);
             throw new Error("Access Denied: The account has not been registered. Please contact the administrator.");
@@ -367,6 +367,8 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
           throw new Error("Your account/subscription is inactive. Please contact the administrator.");
         }
 
+        localStorage.setItem('invoice_auth_type', 'email');
+        localStorage.setItem('invoice_active_session', JSON.stringify(userProfile));
         onLoginSuccess(userProfile);
       } else {
         handleSimulatedLogin(emailLower, inputPassword);
@@ -391,6 +393,48 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
       const isBootstrapped = emailLower === 'kryptontechlk@gmail.com';
       const expectedPassword = dbUser ? (dbUser.password || 'Sathaya@Tewala2000') : 'Sathaya@Tewala2000';
       const isMatchingPassword = inputPassword === expectedPassword;
+
+      if (isMatchingPassword && isFirebaseConfigured) {
+        try {
+          console.log("Dynamically provisioning/signing in credentials user in Firebase Auth...");
+          let userCredential;
+          try {
+            userCredential = await signInWithEmailAndPassword(auth, emailLower, inputPassword);
+            console.log("Successfully signed in existing credentials user in Firebase Auth.");
+          } catch (signErr: any) {
+            if (signErr.code === 'auth/user-not-found' || signErr.code === 'auth/invalid-credential') {
+              userCredential = await createUserWithEmailAndPassword(auth, emailLower, inputPassword);
+              console.log("Successfully created new credentials user in Firebase Auth.");
+            } else {
+              throw signErr;
+            }
+          }
+          const user = userCredential.user;
+          const userProfile: UserProfile = {
+            uid: user.uid,
+            email: emailLower,
+            displayName: 'Krypton Tech Admin',
+            role: 'admin',
+            status: 'active',
+            password: inputPassword,
+            subscriptionPlan: 'enterprise',
+            subscriptionStatus: 'active',
+            subscriptionExpiresAt: '2030-12-31',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          await setDoc(doc(db, 'users', user.uid), cleanUndefined(userProfile));
+          localStorage.setItem('invoice_auth_type', 'email');
+          localStorage.setItem('invoice_active_session', JSON.stringify(userProfile));
+          onLoginSuccess(userProfile);
+          return;
+        } catch (regErr: any) {
+          console.warn("Could not dynamically provision credentials user in Firebase Auth:", regErr);
+          shouldClearLoading = false;
+          handleSimulatedLogin(emailLower, inputPassword);
+          return;
+        }
+      }
 
       if (isMatchingPassword) {
         console.warn(`Outer catch fallback triggered: logging in ${emailLower} via simulated mode due to Firebase Auth error:`, err);
@@ -467,7 +511,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
       }
 
       const emailLower = user.email.toLowerCase();
-      const isBootstrappedAdmin = emailLower === '19ict001@seu.ac.lk' || emailLower === 'kosala0432@gmail.com' || emailLower === 'kryptontechlk@gmail.com';
+      const isBootstrappedAdmin = emailLower === 'kryptontechlk@gmail.com' || emailLower === 'kosala0432@gmail.com';
 
       const userRef = doc(db, 'users', user.uid);
       const q = query(collection(db, 'users'), where('email', '==', emailLower));
@@ -532,7 +576,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
         userProfile = mergedProfile;
 
         // Write reconciled merged master document under real authenticated UID
-        await setDoc(userRef, userProfile);
+        await setDoc(userRef, cleanUndefined(userProfile));
 
         // Migrate subcollections (profile, products, invoices) from old UIDs to user.uid first
         for (const dupId of duplicateDocIds) {
@@ -542,7 +586,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
               const oldProfileRef = doc(db, 'users', dupId, 'profile', 'store_details');
               const oldProfileSnap = await getDoc(oldProfileRef);
               if (oldProfileSnap.exists()) {
-                await setDoc(doc(db, 'users', user.uid, 'profile', 'store_details'), oldProfileSnap.data());
+                await setDoc(doc(db, 'users', user.uid, 'profile', 'store_details'), cleanUndefined(oldProfileSnap.data()));
                 await deleteDoc(oldProfileRef);
               }
 
@@ -551,7 +595,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
               for (const oldDoc of oldProductsSnap.docs) {
                 const productData = oldDoc.data();
                 const updatedProduct = { ...productData, ownerId: user.uid };
-                await setDoc(doc(db, 'users', user.uid, 'products', oldDoc.id), updatedProduct);
+                await setDoc(doc(db, 'users', user.uid, 'products', oldDoc.id), cleanUndefined(updatedProduct));
                 await deleteDoc(doc(db, 'users', dupId, 'products', oldDoc.id));
               }
 
@@ -560,7 +604,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
               for (const oldDoc of oldInvoicesSnap.docs) {
                 const invoiceData = oldDoc.data();
                 const updatedInvoice = { ...invoiceData, ownerId: user.uid };
-                await setDoc(doc(db, 'users', user.uid, 'invoices', oldDoc.id), updatedInvoice);
+                await setDoc(doc(db, 'users', user.uid, 'invoices', oldDoc.id), cleanUndefined(updatedInvoice));
                 await deleteDoc(doc(db, 'users', dupId, 'invoices', oldDoc.id));
               }
             } catch (migErr) {
@@ -596,7 +640,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           };
-          await setDoc(userRef, userProfile);
+          await setDoc(userRef, cleanUndefined(userProfile));
         } else {
           // Standard auto-provisioning is disabled. Instead, reject login for unregistered email addresses.
           await signOut(auth);
@@ -628,6 +672,8 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
           }
         }
 
+        localStorage.setItem('invoice_auth_type', 'google');
+        localStorage.setItem('invoice_active_session', JSON.stringify(userProfile));
         onLoginSuccess(userProfile);
       }
     } catch (err: any) {
@@ -656,7 +702,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
         </h2>
         
         <p className="mt-1 text-center text-xs text-slate-400 uppercase font-mono font-bold tracking-widest">
-          Secure Multi-User Authorization
+          Secure Administration Access
         </p>
       </div>
 
@@ -747,7 +793,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
           <form onSubmit={handleEmailFormSubmit} className="space-y-4">
             <div>
               <label htmlFor="auth-email-field" className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                Operator Username / Email
+                Administrator Email
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -757,7 +803,7 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
                   id="auth-email-field"
                   type="text"
                   required
-                  placeholder="Enter username (KosalaBiyanka) or email"
+                  placeholder="Enter administrator email (kryptontechlk@gmail.com)"
                   value={inputEmail}
                   onChange={(e) => setInputEmail(e.target.value)}
                   className="w-full pl-10 pr-3 h-11 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-xs outline-none transition font-sans animate-fadeIn"
@@ -815,6 +861,20 @@ export default function AuthScreen({ onLoginSuccess, users, initialError }: Auth
                 Or SSO Access
               </span>
               
+              {typeof window !== 'undefined' && window.self !== window.top && (
+                <div className="text-left bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/40 rounded-xl p-3 text-[11px] text-amber-700 dark:text-amber-400 font-medium">
+                  ⚠️ <strong>Google Sign-In Preview Info:</strong> You are inside a sandboxed preview iframe which blocks authentication popups. Click the link below to open the application in a new tab to sign in via Google.
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block mt-1.5 font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
+                  >
+                    Open app in a new tab ↗
+                  </a>
+                </div>
+              )}
+
               <button
                 type="button"
                 disabled={loading}

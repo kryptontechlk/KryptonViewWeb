@@ -74,6 +74,23 @@ export interface ProductCustomField {
   value: string;
 }
 
+export interface PurchaseHistoryRecord {
+  id: string;
+  date: string;
+  purchasePrice: number;
+  qtyAdded: number;
+  notes?: string;
+}
+
+export interface ExpenseRecord {
+  id: string;
+  date: string;
+  category: string;
+  amount: number;
+  description: string;
+  ownerId?: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -94,6 +111,12 @@ export interface Product {
   isAvailable?: boolean;
   isBestSeller?: boolean;
   createdTime?: string;
+  // Financial & Inventory fields
+  purchasePrice?: number;
+  stock?: number;
+  isService?: boolean;
+  purchaseHistory?: PurchaseHistoryRecord[];
+  showInStorefront?: boolean;
 }
 
 export interface InvoiceItem {
@@ -105,12 +128,19 @@ export interface InvoiceItem {
   selectedColor: string;
   quantity: number;
   customFields: ProductCustomField[]; // Snapshot of custom fields for the product
+  originalPrice?: number;
+  discountedPrice?: number;
+  useDiscount?: boolean;
+  // Financial Snapshot
+  purchasePrice?: number;
+  isService?: boolean;
 }
 
 export interface InvoiceCustomField {
   id: string;
   key: string;
   value: string;
+  quantity?: number;
 }
 
 export interface CustomCharge {
@@ -141,6 +171,8 @@ export interface Invoice {
   status: 'draft' | 'final'; // Dynamic invoice routing status
   notes?: string;                 // Terms and conditions or custom notes
   ownerId?: string;
+  totalOriginalSubtotal?: number;
+  totalProductDiscount?: number;
 }
 
 export interface Quotation {
@@ -166,6 +198,8 @@ export interface Quotation {
   notes?: string;                 // Terms and conditions or custom notes
   ownerId?: string;
   validUntil?: string;            // Valid until date
+  totalOriginalSubtotal?: number;
+  totalProductDiscount?: number;
 }
 
 export interface UserProfile {

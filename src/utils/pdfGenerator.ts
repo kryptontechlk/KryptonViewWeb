@@ -300,7 +300,11 @@ export async function downloadInvoiceAsPdf(invoice: Invoice, containerElementId:
 
   try {
     // Find all elements matching the id (there could be multiples because of desktop/mobile views)
-    const elements = document.querySelectorAll(`[id="${containerElementId}"]`);
+    const uniqueId = `invoice-document-${invoice.id || 'default'}`;
+    let elements = document.querySelectorAll(`[id="${uniqueId}"]`);
+    if (elements.length === 0) {
+      elements = document.querySelectorAll(`[id="${containerElementId}"]`);
+    }
     let element: HTMLElement | null = null;
 
     if (elements.length > 0) {
@@ -349,7 +353,19 @@ export async function downloadInvoiceAsPdf(invoice: Invoice, containerElementId:
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
       
       const printableHeight = pageHeight - topMargin - bottomMargin;
-      let heightLeft = imgHeight;
+      
+      let finalImgWidth = imgWidth;
+      let finalImgHeight = imgHeight;
+      let finalMarginHorizontal = marginHorizontal;
+
+      // Intelligent single-page compression: if the content spills over slightly (up to 25%), scale it down to fit on a single page!
+      if (imgHeight > printableHeight && imgHeight <= printableHeight * 1.25) {
+        finalImgHeight = printableHeight;
+        finalImgWidth = (canvas.width * finalImgHeight) / canvas.height;
+        finalMarginHorizontal = (pageWidth - finalImgWidth) / 2;
+      }
+
+      let heightLeft = finalImgHeight;
       let pageIndex = 0;
 
       while (heightLeft > 0) {
@@ -361,7 +377,7 @@ export async function downloadInvoiceAsPdf(invoice: Invoice, containerElementId:
         const position = topMargin - (pageIndex * printableHeight);
         
         // Add the image slice
-        pdf.addImage(imgData, 'PNG', marginHorizontal, position, imgWidth, imgHeight);
+        pdf.addImage(imgData, 'PNG', finalMarginHorizontal, position, finalImgWidth, finalImgHeight);
         
         // Mask top margin with solid white rectangle for clean top breathing space
         pdf.setFillColor(255, 255, 255);
@@ -374,8 +390,11 @@ export async function downloadInvoiceAsPdf(invoice: Invoice, containerElementId:
         pageIndex++;
       }
 
-      const cleanedFileName = invoice.invoiceNumber.replace(/[^a-zA-Z0-9-_]/g, '_');
-      pdf.save(`Invoice_${cleanedFileName}.pdf`);
+      const docNum = invoice.invoiceNumber || (invoice as any).quotationNumber || 'Document';
+      const isQuote = !invoice.invoiceNumber && !!(invoice as any).quotationNumber;
+      const prefix = isQuote ? 'Quotation' : 'Invoice';
+      const cleanedFileName = docNum.replace(/[^a-zA-Z0-9-_]/g, '_');
+      pdf.save(`${prefix}_${cleanedFileName}.pdf`);
     };
 
     // A. Create an off-screen viewport workspace at fixed off-screen coordinates but fully opaque (1.0) and visible!
@@ -395,12 +414,13 @@ export async function downloadInvoiceAsPdf(invoice: Invoice, containerElementId:
     const clone = element.cloneNode(true) as HTMLElement;
     
     // C. Remove outer layout margins and shadows for perfect page presentation
+    const isQuote = !invoice.invoiceNumber || 'quotationNumber' in invoice;
     clone.style.transform = 'none';
     clone.style.width = '100%';
     clone.style.maxWidth = '100%';
     clone.style.height = 'auto';
     clone.style.margin = '0px';
-    clone.style.padding = '40px'; // Solid professional margin space
+    clone.style.padding = isQuote ? '15px 40px 40px 40px' : '40px'; // Less upper free space for quotations
     clone.style.boxShadow = 'none';
     clone.style.border = 'none';
     clone.style.display = 'block';
@@ -481,7 +501,19 @@ export async function downloadInvoiceAsPdf(invoice: Invoice, containerElementId:
           const imgHeight = (canvasFallback.height * imgWidth) / canvasFallback.width;
           
           const printableHeight = pageHeight - topMargin - bottomMargin;
-          let heightLeft = imgHeight;
+          
+          let finalImgWidth = imgWidth;
+          let finalImgHeight = imgHeight;
+          let finalMarginHorizontal = marginHorizontal;
+
+          // Intelligent single-page compression: if the content spills over slightly (up to 25%), scale it down to fit on a single page!
+          if (imgHeight > printableHeight && imgHeight <= printableHeight * 1.25) {
+            finalImgHeight = printableHeight;
+            finalImgWidth = (canvasFallback.width * finalImgHeight) / canvasFallback.height;
+            finalMarginHorizontal = (pageWidth - finalImgWidth) / 2;
+          }
+
+          let heightLeft = finalImgHeight;
           let pageIndex = 0;
 
           while (heightLeft > 0) {
@@ -489,7 +521,7 @@ export async function downloadInvoiceAsPdf(invoice: Invoice, containerElementId:
               pdf.addPage();
             }
             const position = topMargin - (pageIndex * printableHeight);
-            pdf.addImage(imgData, 'PNG', marginHorizontal, position, imgWidth, imgHeight);
+            pdf.addImage(imgData, 'PNG', finalMarginHorizontal, position, finalImgWidth, finalImgHeight);
             
             pdf.setFillColor(255, 255, 255);
             pdf.rect(0, 0, pageWidth, topMargin, 'F');
@@ -498,8 +530,11 @@ export async function downloadInvoiceAsPdf(invoice: Invoice, containerElementId:
             heightLeft -= printableHeight;
             pageIndex++;
           }
-          const cleanedFileName = invoice.invoiceNumber.replace(/[^a-zA-Z0-9-_]/g, '_');
-          pdf.save(`Invoice_${cleanedFileName}.pdf`);
+          const docNum = invoice.invoiceNumber || (invoice as any).quotationNumber || 'Document';
+          const isQuote = !invoice.invoiceNumber && !!(invoice as any).quotationNumber;
+          const prefix = isQuote ? 'Quotation' : 'Invoice';
+          const cleanedFileName = docNum.replace(/[^a-zA-Z0-9-_]/g, '_');
+          pdf.save(`${prefix}_${cleanedFileName}.pdf`);
         };
 
         await generatePdfFromCanvasFallback(canvas);
@@ -588,7 +623,11 @@ export async function getInvoicePdfFile(invoice: Invoice, containerElementId: st
   let tempContainer: HTMLDivElement | null = null;
 
   try {
-    const elements = document.querySelectorAll(`[id="${containerElementId}"]`);
+    const uniqueId = `invoice-document-${invoice.id || 'default'}`;
+    let elements = document.querySelectorAll(`[id="${uniqueId}"]`);
+    if (elements.length === 0) {
+      elements = document.querySelectorAll(`[id="${containerElementId}"]`);
+    }
     let element: HTMLElement | null = null;
 
     if (elements.length > 0) {
@@ -622,12 +661,13 @@ export async function getInvoicePdfFile(invoice: Invoice, containerElementId: st
     document.body.appendChild(tempContainer);
 
     const clone = element.cloneNode(true) as HTMLElement;
+    const isQuote = !invoice.invoiceNumber || 'quotationNumber' in invoice;
     clone.style.transform = 'none';
     clone.style.width = '100%';
     clone.style.maxWidth = '100%';
     clone.style.height = 'auto';
     clone.style.margin = '0px';
-    clone.style.padding = '40px';
+    clone.style.padding = isQuote ? '15px 40px 40px 40px' : '40px'; // Less upper free space for quotations
     clone.style.boxShadow = 'none';
     clone.style.border = 'none';
     clone.style.display = 'block';
@@ -677,7 +717,19 @@ export async function getInvoicePdfFile(invoice: Invoice, containerElementId: st
     const imgHeight = (canvas.height * imgWidth) / canvas.width;
     
     const printableHeight = pageHeight - topMargin - bottomMargin;
-    let heightLeft = imgHeight;
+    
+    let finalImgWidth = imgWidth;
+    let finalImgHeight = imgHeight;
+    let finalMarginHorizontal = marginHorizontal;
+
+    // Intelligent single-page compression: if the content spills over slightly (up to 25%), scale it down to fit on a single page!
+    if (imgHeight > printableHeight && imgHeight <= printableHeight * 1.25) {
+      finalImgHeight = printableHeight;
+      finalImgWidth = (canvas.width * finalImgHeight) / canvas.height;
+      finalMarginHorizontal = (pageWidth - finalImgWidth) / 2;
+    }
+
+    let heightLeft = finalImgHeight;
     let pageIndex = 0;
 
     while (heightLeft > 0) {
@@ -685,7 +737,7 @@ export async function getInvoicePdfFile(invoice: Invoice, containerElementId: st
         pdf.addPage();
       }
       const position = topMargin - (pageIndex * printableHeight);
-      pdf.addImage(imgData, 'PNG', marginHorizontal, position, imgWidth, imgHeight);
+      pdf.addImage(imgData, 'PNG', finalMarginHorizontal, position, finalImgWidth, finalImgHeight);
       
       pdf.setFillColor(255, 255, 255);
       pdf.rect(0, 0, pageWidth, topMargin, 'F');
@@ -696,8 +748,10 @@ export async function getInvoicePdfFile(invoice: Invoice, containerElementId: st
     }
 
     const blob = pdf.output('blob');
-    const cleanedFileName = invoice.invoiceNumber.replace(/[^a-zA-Z0-9-_]/g, '_');
-    return new File([blob], `Invoice_${cleanedFileName}.pdf`, { type: 'application/pdf' });
+    const docNum = invoice.invoiceNumber || (invoice as any).quotationNumber || 'Document';
+    const prefix = isQuote ? 'Quotation' : 'Invoice';
+    const cleanedFileName = docNum.replace(/[^a-zA-Z0-9-_]/g, '_');
+    return new File([blob], `${prefix}_${cleanedFileName}.pdf`, { type: 'application/pdf' });
 
   } catch (error) {
     console.warn("Off-screen File generator path failed, trying fallback...", error);
@@ -742,7 +796,19 @@ export async function getInvoicePdfFile(invoice: Invoice, containerElementId: st
         const imgHeight = (canvas.height * imgWidth) / canvas.width;
         
         const printableHeight = pageHeight - topMargin - bottomMargin;
-        let heightLeft = imgHeight;
+        
+        let finalImgWidth = imgWidth;
+        let finalImgHeight = imgHeight;
+        let finalMarginHorizontal = marginHorizontal;
+
+        // Intelligent single-page compression: if the content spills over slightly (up to 25%), scale it down to fit on a single page!
+        if (imgHeight > printableHeight && imgHeight <= printableHeight * 1.25) {
+          finalImgHeight = printableHeight;
+          finalImgWidth = (canvas.width * finalImgHeight) / canvas.height;
+          finalMarginHorizontal = (pageWidth - finalImgWidth) / 2;
+        }
+
+        let heightLeft = finalImgHeight;
         let pageIndex = 0;
 
         while (heightLeft > 0) {
@@ -750,7 +816,7 @@ export async function getInvoicePdfFile(invoice: Invoice, containerElementId: st
             pdf.addPage();
           }
           const position = topMargin - (pageIndex * printableHeight);
-          pdf.addImage(imgData, 'PNG', marginHorizontal, position, imgWidth, imgHeight);
+          pdf.addImage(imgData, 'PNG', finalMarginHorizontal, position, finalImgWidth, finalImgHeight);
           
           pdf.setFillColor(255, 255, 255);
           pdf.rect(0, 0, pageWidth, topMargin, 'F');
@@ -761,8 +827,11 @@ export async function getInvoicePdfFile(invoice: Invoice, containerElementId: st
         }
 
         const blob = pdf.output('blob');
-        const cleanedFileName = invoice.invoiceNumber.replace(/[^a-zA-Z0-9-_]/g, '_');
-        return new File([blob], `Invoice_${cleanedFileName}.pdf`, { type: 'application/pdf' });
+        const docNum = invoice.invoiceNumber || (invoice as any).quotationNumber || 'Document';
+        const isQuote = !invoice.invoiceNumber && !!(invoice as any).quotationNumber;
+        const prefix = isQuote ? 'Quotation' : 'Invoice';
+        const cleanedFileName = docNum.replace(/[^a-zA-Z0-9-_]/g, '_');
+        return new File([blob], `${prefix}_${cleanedFileName}.pdf`, { type: 'application/pdf' });
       }
       return null;
     } catch (fallbackError) {

@@ -88,6 +88,29 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
+/**
+ * Recursively cleans any object/array by removing all undefined fields
+ * so that they can be safely written to Firestore.
+ */
+export function cleanUndefined<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(item => cleanUndefined(item)) as unknown as T;
+  }
+
+  const cleaned: any = {};
+  for (const key of Object.keys(obj)) {
+    const val = (obj as any)[key];
+    if (val !== undefined) {
+      cleaned[key] = cleanUndefined(val);
+    }
+  }
+  return cleaned as T;
+}
+
 // --- SUPER ADMIN GOVERNANCE BACKEND FUNCTIONS (CRUD) ---
 
 /**

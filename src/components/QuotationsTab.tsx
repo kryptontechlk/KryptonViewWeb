@@ -4,7 +4,7 @@ import { Quotation, CompanyProfile, Invoice } from '../types';
 import InvoiceDocument from './InvoiceDocument';
 import MobileA4ScaledPreview from './MobileA4ScaledPreview';
 import { downloadInvoiceAsPdf } from '../utils/pdfGenerator';
-import { getGmailComposeLink, formatInvoiceMessage } from '../utils/mailHelper';
+import { getGmailComposeLink, formatInvoiceMessage, getWhatsAppLink, cleanSriLankanPhoneNumber } from '../utils/mailHelper';
 import { 
   Search, 
   FileText, 
@@ -21,7 +21,9 @@ import {
   ArrowUpRight,
   ClipboardCheck,
   PlusCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Shield,
+  Edit
 } from 'lucide-react';
 
 interface QuotationsTabProps {
@@ -30,6 +32,7 @@ interface QuotationsTabProps {
   onDeleteQuotation: (id: string) => void;
   onClearAllQuotations: () => void;
   onConvertToInvoice: (quotation: Quotation) => void;
+  onEditQuotation?: (quotation: Quotation) => void;
 }
 
 export default function QuotationsTab({ 
@@ -37,7 +40,8 @@ export default function QuotationsTab({
   profile, 
   onDeleteQuotation, 
   onClearAllQuotations,
-  onConvertToInvoice
+  onConvertToInvoice,
+  onEditQuotation
 }: QuotationsTabProps) {
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
   const [quickViewQuotation, setQuickViewQuotation] = useState<Quotation | null>(null);
@@ -110,7 +114,7 @@ export default function QuotationsTab({
     }
   };
 
-  const handleSendLocalEmail = async (quotation: Quotation) => {
+  const handleSendLocalEmail = (quotation: Quotation) => {
     const emailField = quotation.customerCustomFields?.find(f => f.key.toLowerCase() === 'email' || f.key.toLowerCase() === 'customer email');
     const defaultEmail = quotation.customerEmail || (emailField ? emailField.value : '');
 
@@ -128,15 +132,15 @@ export default function QuotationsTab({
 
     const useGmail = confirm("Press OK to compose using Gmail Web interface.\nPress Cancel to use your system's Default Mail Client (Outlook, Apple Mail, Mail app).");
 
-    setActivePdfGeneratingQuotation(quotation);
-    await new Promise(resolve => setTimeout(resolve, 100));
-    await downloadInvoiceAsPdf(quotation as unknown as Invoice, 'invoice-document');
-    setActivePdfGeneratingQuotation(null);
-
-    let link = '';
     const subject = `Quotation ${quotation.quotationNumber} from ${profile.name || 'Our Store'}`;
     const body = formatInvoiceMessage(quotation as unknown as Invoice, profile.name, profile.phone);
 
+    // Copy to clipboard as backup non-blockingly
+    navigator.clipboard.writeText(body).catch(err => {
+      console.warn("Could not copy backup text to clipboard:", err);
+    });
+
+    let link = '';
     if (useGmail) {
       link = getGmailComposeLink(quotation as unknown as Invoice, profile, recipient.trim());
     } else {
@@ -146,26 +150,33 @@ export default function QuotationsTab({
     try {
       const a = document.createElement('a');
       a.href = link;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
+      if (useGmail) {
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+      }
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
     } catch (popupErr) {
       console.error(popupErr);
-      const confirmCopy = confirm("Your browser blocked opening your email app. Copy compose URL link directly to clipboard?");
-      if (confirmCopy) {
-        navigator.clipboard.writeText(link);
-        alert("Copied successfully! You can paste the link in your browser bar.");
-      }
+      navigator.clipboard.writeText(link);
+      alert("Mail compose link prepared! Opened email composer.");
     }
+
+    // Trigger PDF download in the background off-screen non-blockingly
+    setActivePdfGeneratingQuotation(quotation);
+    setTimeout(() => {
+      downloadInvoiceAsPdf(quotation as unknown as Invoice, 'invoice-document')
+        .catch(err => console.warn("Background PDF generation failed:", err))
+        .finally(() => setActivePdfGeneratingQuotation(null));
+    }, 100);
   };
 
   const handleShareLocalWhatsApp = (quotation: Quotation) => {
     const whatsappNumber = quotation.customerWhatsapp || quotation.customerPhone;
     let recipient = whatsappNumber ? whatsappNumber.trim() : '';
     if (!recipient) {
-      const promptedRecipient = prompt(`Composing WhatsApp message for quotation ${quotation.quotationNumber}. Verify phone number (with country code):`);
+      const promptedRecipient = prompt(`Composing WhatsApp message for quotation ${quotation.quotationNumber}. Verify phone number (e.g., 0771234567 or 94771234567):`);
       if (promptedRecipient === null) return;
       recipient = promptedRecipient.trim();
     }
@@ -175,13 +186,15 @@ export default function QuotationsTab({
       return;
     }
     
-    let cleanedPhone = recipient.trim().replace(/[^0-9]/g, '');
-    if (cleanedPhone.startsWith('0') && cleanedPhone.length === 10) {
-      cleanedPhone = '94' + cleanedPhone.substring(1);
-    }
-    
+    const cleanedPhone = cleanSriLankanPhoneNumber(recipient);
     const message = formatInvoiceMessage(quotation as unknown as Invoice, profile.name, profile.phone);
-    const waLink = `https://wa.me/${cleanedPhone}?text=${encodeURIComponent(message)}`;
+
+    // Copy text summary to clipboard as backup non-blockingly
+    navigator.clipboard.writeText(message).catch(err => {
+      console.warn("Could not copy backup text to clipboard:", err);
+    });
+
+    const waLink = getWhatsAppLink(cleanedPhone, message);
     
     try {
       const a = document.createElement('a');
@@ -195,6 +208,14 @@ export default function QuotationsTab({
       console.error(popupErr);
       window.open(waLink, '_blank');
     }
+
+    // Trigger PDF download in the background off-screen non-blockingly
+    setActivePdfGeneratingQuotation(quotation);
+    setTimeout(() => {
+      downloadInvoiceAsPdf(quotation as unknown as Invoice, 'invoice-document')
+        .catch(err => console.warn("Background PDF generation failed:", err))
+        .finally(() => setActivePdfGeneratingQuotation(null));
+    }, 100);
   };
 
   // CSV Export Engine
@@ -271,15 +292,15 @@ export default function QuotationsTab({
     <div className="space-y-6 animate-fade-in no-print">
       
       {/* Offscreen element exclusively for print canvas render & PDF output */}
-      <div className="absolute top-0 left-0 w-0 h-0 overflow-hidden opacity-0 pointer-events-none no-print">
-        {activePdfGeneratingQuotation && (
+      {activePdfGeneratingQuotation && (
+        <div style={{ position: 'absolute', left: '-9999px', top: '-9999px', pointerEvents: 'none' }} className="no-print">
           <InvoiceDocument 
             invoice={activePdfGeneratingQuotation} 
             profile={profile} 
             isQuotation={true}
           />
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Header Panel */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-150 dark:border-slate-800 premium-shadow">
@@ -441,6 +462,17 @@ export default function QuotationsTab({
                       </td>
                       <td className="py-4 px-4">
                         <div className="flex items-center justify-end gap-1.5">
+                          {/* Edit / Prepare Quotation Button */}
+                          {onEditQuotation && (
+                            <button
+                              onClick={() => onEditQuotation(q)}
+                              className="p-1.5 text-blue-600 hover:text-white hover:bg-blue-600 rounded-lg transition-colors cursor-pointer shrink-0"
+                              title="Edit / Prepare Quotation details"
+                            >
+                              <Edit size={15} />
+                            </button>
+                          )}
+
                           {/* Convert to Invoice Button */}
                           <button
                             onClick={() => {
@@ -559,6 +591,21 @@ export default function QuotationsTab({
                 </div>
 
                 <div className="flex gap-2 items-center">
+                  {/* Edit Quotation Button */}
+                  {onEditQuotation && (
+                    <button
+                      onClick={() => {
+                        onEditQuotation(quickViewQuotation);
+                        setQuickViewQuotation(null);
+                      }}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-xl flex items-center gap-1 transition-colors cursor-pointer h-8"
+                      title="Edit / Prepare Quotation details in editor"
+                    >
+                      <Edit size={12} />
+                      <span>Edit Quotation</span>
+                    </button>
+                  )}
+
                   {/* Convert to Bill Button */}
                   <button
                     onClick={() => {
@@ -662,6 +709,39 @@ export default function QuotationsTab({
                         </div>
                       </div>
                     </div>
+
+                    {/* Private Profitability Analysis for Admins/Operators */}
+                    {(() => {
+                      const totalCost = quickViewQuotation.items.reduce((sum, item) => sum + ((item.purchasePrice || 0) * item.quantity), 0);
+                      const netProfit = quickViewQuotation.total - totalCost;
+                      const marginPct = quickViewQuotation.total > 0 ? (netProfit / quickViewQuotation.total) * 100 : 0;
+
+                      return (
+                        <div className="bg-slate-100 dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                              <Shield size={11} className="text-indigo-600 dark:text-indigo-400" />
+                              <span>Private Quotation Margin</span>
+                            </span>
+                            <span className="text-[9px] bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 px-1.5 py-0.2 rounded font-black font-mono">SECURED</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <span className="block text-[9px] text-slate-400 uppercase tracking-wider mb-0.5">Estimated Cost</span>
+                              <span className="font-mono font-bold text-slate-750 dark:text-slate-300">LKR {totalCost.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[9px] text-slate-400 uppercase tracking-wider mb-0.5">Projected Profit</span>
+                              <span className={`font-mono font-bold ${netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>LKR {netProfit.toLocaleString()}</span>
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center pt-1.5 border-t border-slate-200 dark:border-slate-800 text-xs">
+                            <span className="text-[9px] uppercase font-bold text-slate-400">Profit Margin %</span>
+                            <span className={`font-mono font-black ${netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>{marginPct.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     <div className="bg-white dark:bg-slate-950 p-4 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-3">
                       <h4 className="font-display font-bold text-[10px] text-slate-400 uppercase tracking-widest block">

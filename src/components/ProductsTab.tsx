@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, ProductCustomField, CompanyProfile, Category } from '../types';
+import { Product, ProductCustomField, CompanyProfile, Category, PurchaseHistoryRecord } from '../types';
 import { 
   Plus, 
   Trash, 
@@ -23,7 +23,12 @@ import {
   Sparkles,
   ToggleLeft,
   ToggleRight,
-  Download
+  Download,
+  History,
+  Calendar,
+  Wrench,
+  Info,
+  ShieldCheck
 } from 'lucide-react';
 
 interface ProductsTabProps {
@@ -69,7 +74,19 @@ export default function ProductsTab({
   const [packageIncludes, setPackageIncludes] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
   const [isBestSeller, setIsBestSeller] = useState(false);
+  const [showInStorefront, setShowInStorefront] = useState(true);
   const [images, setImages] = useState<string[]>([]);
+
+  // Financial, Inventory, and Purchase History states
+  const [purchasePrice, setPurchasePrice] = useState('');
+  const [stock, setStock] = useState('');
+  const [isService, setIsService] = useState(false);
+  const [purchaseHistory, setPurchaseHistory] = useState<PurchaseHistoryRecord[]>([]);
+  
+  // New purchase history batch record form states
+  const [newBatchPrice, setNewBatchPrice] = useState('');
+  const [newBatchQty, setNewBatchQty] = useState('');
+  const [newBatchNotes, setNewBatchNotes] = useState('');
   
   // Custom templates fields state
   const [customFields, setCustomFields] = useState<ProductCustomField[]>([]);
@@ -303,9 +320,17 @@ export default function ProductsTab({
     setPackageIncludes('');
     setIsAvailable(true);
     setIsBestSeller(false);
+    setShowInStorefront(true);
     setImages([]);
     setCustomFields(getInitializedFields([]));
     setErrorMsg('');
+    setPurchasePrice('');
+    setStock('');
+    setIsService(false);
+    setPurchaseHistory([]);
+    setNewBatchPrice('');
+    setNewBatchQty('');
+    setNewBatchNotes('');
   };
 
   // Add or Update product
@@ -314,28 +339,34 @@ export default function ProductsTab({
     setErrorMsg('');
 
     if (!name.trim()) return setErrorMsg('Product Name is required.');
-    if (!code.trim()) return setErrorMsg('Product Code is required.');
-    if (!price || isNaN(Number(price)) || Number(price) <= 0) return setErrorMsg('Price must be a valid positive number.');
 
-    const finalCategory = isAddingCustomCategory ? customCategory.trim() : category;
-    if (!finalCategory) {
-      return setErrorMsg('Please specify or select a Product Category.');
+    // Fields can be null/empty, we handle default values safely
+    const finalCode = code.trim() ? code.trim().toUpperCase() : `PRD-${Date.now().toString().slice(-5)}`;
+    const finalPrice = price ? Number(price) : 0;
+    if (isNaN(finalPrice) || finalPrice < 0) {
+      return setErrorMsg('Price must be a valid positive number.');
     }
+
+    const finalCategory = isAddingCustomCategory 
+      ? (customCategory.trim() || 'General') 
+      : (category || 'General');
 
     const discPriceNum = discountedPrice ? Number(discountedPrice) : undefined;
     if (discPriceNum !== undefined) {
       if (isNaN(discPriceNum) || discPriceNum <= 0) {
         return setErrorMsg('Discounted price must be a valid positive number.');
       }
-      if (discPriceNum >= Number(price)) {
+      if (discPriceNum >= finalPrice && finalPrice > 0) {
         return setErrorMsg('Discounted price must be lower than the standard base price.');
       }
     }
 
-    // Check duplicate code (ignoring current being edited)
-    const isDuplicate = products.some(p => p.code.toLowerCase() === code.trim().toLowerCase() && p.id !== editingId);
-    if (isDuplicate) {
-      return setErrorMsg(`Product code "${code}" already exists in the catalog directory.`);
+    // Check duplicate code (ignoring current being edited) only if they typed a code
+    if (code.trim()) {
+      const isDuplicate = products.some(p => p.code.toLowerCase() === code.trim().toLowerCase() && p.id !== editingId);
+      if (isDuplicate) {
+        return setErrorMsg(`Product code "${code}" already exists in the catalog directory.`);
+      }
     }
 
     // Build specifications from the visual key value pairs + Brand/Model parameters
@@ -344,8 +375,8 @@ export default function ProductsTab({
     const payload: Product = {
       id: editingId || crypto.randomUUID(),
       name: name.trim(),
-      code: code.trim().toUpperCase(),
-      price: Number(price),
+      code: finalCode,
+      price: finalPrice,
       brand: brand.trim(),
       model: model.trim(),
       category: finalCategory,
@@ -355,10 +386,15 @@ export default function ProductsTab({
       packageIncludes: packageIncludes.trim(),
       isAvailable,
       isBestSeller,
+      showInStorefront,
       images: images.length > 0 ? images : undefined,
       colors: [],
       customFields: specsList,
-      createdTime: editingId ? (products.find(p => p.id === editingId)?.createdTime || new Date().toISOString()) : new Date().toISOString()
+      createdTime: editingId ? (products.find(p => p.id === editingId)?.createdTime || new Date().toISOString()) : new Date().toISOString(),
+      purchasePrice: purchasePrice ? Number(purchasePrice) : 0,
+      stock: isService ? 0 : (stock ? Number(stock) : 0),
+      isService,
+      purchaseHistory: purchaseHistory
     };
 
     // Auto-save custom category to collection if it doesn't exist
@@ -405,9 +441,19 @@ export default function ProductsTab({
     setPackageIncludes(product.packageIncludes || '');
     setIsAvailable(product.isAvailable !== false); // default to true
     setIsBestSeller(!!product.isBestSeller);
+    setShowInStorefront(product.showInStorefront !== false);
     setImages(product.images || []);
     setCustomFields(getInitializedFields(product.customFields || []));
     setErrorMsg('');
+    
+    // Financial & stock initialization
+    setPurchasePrice(product.purchasePrice ? product.purchasePrice.toString() : '');
+    setStock(product.stock ? product.stock.toString() : '');
+    setIsService(!!product.isService);
+    setPurchaseHistory(product.purchaseHistory || []);
+    setNewBatchPrice('');
+    setNewBatchQty('');
+    setNewBatchNotes('');
   };
 
   const csvFileInputRef = useRef<HTMLInputElement>(null);
@@ -708,7 +754,7 @@ export default function ProductsTab({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">
-                    Catalog SKU Code *
+                    Catalog SKU Code (Optional)
                   </label>
                   <input
                     type="text"
@@ -716,7 +762,6 @@ export default function ProductsTab({
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-sm font-mono outline-none transition duration-150 dark:bg-slate-800/40 dark:border-slate-700 dark:text-slate-100 dark:focus:bg-slate-800"
-                    required
                   />
                 </div>
                 <div>
@@ -750,16 +795,14 @@ export default function ProductsTab({
                       value={customCategory}
                       onChange={(e) => setCustomCategory(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-sm outline-none transition duration-150 dark:bg-slate-800/40 dark:border-slate-700 dark:text-slate-100 dark:focus:bg-slate-800"
-                      required
                     />
                   ) : (
                     <select
                       value={category}
                       onChange={(e) => setCategory(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-sm outline-none transition duration-150 dark:bg-slate-800/40 dark:border-slate-700 dark:text-slate-100 dark:focus:bg-slate-800"
-                      required
                     >
-                      <option value="">-- Choose Category --</option>
+                      <option value="">-- Choose Category (Optional) --</option>
                       {allCategories.map((cat) => (
                         <option key={cat} value={cat}>{cat}</option>
                       ))}
@@ -772,7 +815,7 @@ export default function ProductsTab({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">
-                    Base Price (LKR) *
+                    Base Price (LKR) (Optional)
                   </label>
                   <input
                     type="number"
@@ -782,7 +825,6 @@ export default function ProductsTab({
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-sm font-mono outline-none transition duration-150 dark:bg-slate-800/40 dark:border-slate-700 dark:text-slate-100 dark:focus:bg-slate-800"
-                    required
                   />
                 </div>
                 <div>
@@ -801,12 +843,183 @@ export default function ProductsTab({
                 </div>
               </div>
 
-              {/* Marketing Toggles */}
-              <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-800/30 p-3 rounded-xl border border-slate-150 dark:border-slate-800">
-                <div className="flex items-center justify-between">
+              {/* Product vs Service Type */}
+              <div className="bg-slate-50 dark:bg-slate-800/20 p-3.5 rounded-xl border border-slate-150 dark:border-slate-800 space-y-2">
+                <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Offering Type
+                </span>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700 dark:text-slate-350">
+                    <input 
+                      type="radio" 
+                      name="isService" 
+                      checked={!isService} 
+                      onChange={() => {
+                        setIsService(false);
+                      }} 
+                      className="text-indigo-600 focus:ring-indigo-500" 
+                    />
+                    <span>Physical Product (with inventory stock)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700 dark:text-slate-350">
+                    <input 
+                      type="radio" 
+                      name="isService" 
+                      checked={isService} 
+                      onChange={() => {
+                        setIsService(true);
+                      }} 
+                      className="text-indigo-600 focus:ring-indigo-500" 
+                    />
+                    <span>Service offering (no physical stock)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Purchase / Cost Price and Inventory Stock */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5 flex items-center gap-1">
+                    <span>{isService ? "Cost of Service (LKR) (Optional)" : "Cost/Purchase Price (LKR) (Optional)"}</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="e.g. 180000"
+                    value={purchasePrice}
+                    onChange={(e) => setPurchasePrice(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-sm font-mono outline-none transition duration-150 dark:bg-slate-800/40 dark:border-slate-700 dark:text-slate-100 dark:focus:bg-slate-800"
+                  />
+                </div>
+                {!isService && (
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">
+                      Current Stock Level (Optional)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="e.g. 15"
+                      value={stock}
+                      onChange={(e) => setStock(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl text-slate-800 text-sm font-mono outline-none transition duration-150 dark:bg-slate-800/40 dark:border-slate-700 dark:text-slate-100 dark:focus:bg-slate-800"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Purchase History / Cost Tracker Batch Logger */}
+              <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-xl p-4 shadow-md space-y-3 border border-slate-800">
+                <div className="flex justify-between items-center border-b border-white/10 pb-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                    <History size={12} className="text-emerald-400" />
+                    <span>Purchase Cost History & Stock Replenishment</span>
+                  </span>
+                </div>
+                
+                {/* Form to log a new purchase batch */}
+                <div className="space-y-2 bg-white/5 p-3 rounded-lg border border-white/10">
+                  <span className="block text-[9.5px] font-extrabold uppercase text-slate-300 tracking-wider">
+                    Log New Purchase Batch
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="block text-[8px] text-slate-400 uppercase tracking-wider mb-0.5">Batch Cost (LKR)</span>
+                      <input 
+                        type="number" 
+                        min="0" 
+                        placeholder="Cost"
+                        value={newBatchPrice}
+                        onChange={(e) => setNewBatchPrice(e.target.value)}
+                        className="w-full px-2 py-1 bg-white/10 border border-white/20 rounded text-white text-xs font-mono outline-none focus:border-indigo-400"
+                      />
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-slate-400 uppercase tracking-wider mb-0.5">{isService ? "Batch Logs (Qty)" : "Add Stock (Qty)"}</span>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        placeholder="Qty"
+                        value={newBatchQty}
+                        onChange={(e) => setNewBatchQty(e.target.value)}
+                        className="w-full px-2 py-1 bg-white/10 border border-white/20 rounded text-white text-xs font-mono outline-none focus:border-indigo-400"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <span className="block text-[8px] text-slate-400 uppercase tracking-wider mb-0.5">Optional Batch Notes</span>
+                    <input 
+                      type="text" 
+                      placeholder="e.g., Purchased from Alpha Dist."
+                      value={newBatchNotes}
+                      onChange={(e) => setNewBatchNotes(e.target.value)}
+                      className="w-full px-2 py-1 bg-white/10 border border-white/20 rounded text-white text-[11px] outline-none focus:border-indigo-400"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newBatchPrice || isNaN(Number(newBatchPrice))) return;
+                      const qty = newBatchQty ? Number(newBatchQty) : 1;
+                      const priceVal = Number(newBatchPrice);
+                      const newRecord: PurchaseHistoryRecord = {
+                        id: crypto.randomUUID(),
+                        date: new Date().toISOString(),
+                        purchasePrice: priceVal,
+                        qtyAdded: qty,
+                        notes: newBatchNotes.trim() || undefined
+                      };
+                      setPurchaseHistory([newRecord, ...purchaseHistory]);
+                      setPurchasePrice(priceVal.toString());
+                      if (!isService) {
+                        const currentStock = stock ? Number(stock) : 0;
+                        setStock((currentStock + qty).toString());
+                      }
+                      setNewBatchPrice('');
+                      setNewBatchQty('');
+                      setNewBatchNotes('');
+                    }}
+                    className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white font-extrabold text-[10px] uppercase tracking-wider rounded transition"
+                  >
+                    Apply Batch & Update Stock
+                  </button>
+                </div>
+
+                {/* Display history list */}
+                {purchaseHistory.length > 0 ? (
+                  <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+                    <span className="block text-[9px] text-indigo-300 uppercase font-extrabold tracking-wider">
+                      Batch Cost Logs ({purchaseHistory.length})
+                    </span>
+                    <div className="space-y-1">
+                      {purchaseHistory.map((h) => (
+                        <div key={h.id} className="flex justify-between items-start text-[10px] bg-white/5 hover:bg-white/10 p-2 rounded border border-white/5">
+                          <div className="space-y-0.5 text-left">
+                            <span className="font-mono text-emerald-400 font-bold block">LKR {h.purchasePrice.toLocaleString()}</span>
+                            <span className="text-[8px] text-slate-400 flex items-center gap-1">
+                              <Calendar size={8} /> {new Date(h.date).toLocaleDateString()} at {new Date(h.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                            {h.notes && <span className="block text-[8.5px] text-slate-300 italic">"{h.notes}"</span>}
+                          </div>
+                          <span className="font-bold text-indigo-200">+{h.qtyAdded} units</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[9.5px] text-slate-400 italic text-center py-2">
+                    No cost history logged yet. Newly created purchase batches will display here.
+                  </div>
+                )}
+              </div>
+
+              {/* Marketing & Storefront Toggles */}
+              <div className="grid grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-800/30 p-3 rounded-xl border border-slate-150 dark:border-slate-800">
+                <div className="flex items-center justify-between pr-2 border-r border-slate-200 dark:border-slate-700">
                   <div className="flex flex-col">
                     <span className="text-[11px] font-bold text-slate-700 dark:text-slate-350">In Stock</span>
-                    <span className="text-[9px] text-slate-400">Available to buy</span>
+                    <span className="text-[9px] text-slate-400">Available</span>
                   </div>
                   <button
                     type="button"
@@ -821,10 +1034,10 @@ export default function ProductsTab({
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between border-l border-slate-200 dark:border-slate-700 pl-3">
+                <div className="flex items-center justify-between px-2 border-r border-slate-200 dark:border-slate-700">
                   <div className="flex flex-col">
                     <span className="text-[11px] font-bold text-slate-700 dark:text-slate-350">Best Seller</span>
-                    <span className="text-[9px] text-slate-400">Featured Badge</span>
+                    <span className="text-[9px] text-slate-400">Featured</span>
                   </div>
                   <button
                     type="button"
@@ -832,6 +1045,24 @@ export default function ProductsTab({
                     className="text-slate-500 hover:text-indigo-600 transition"
                   >
                     {isBestSeller ? (
+                      <ToggleRight size={28} className="text-indigo-600 shrink-0" />
+                    ) : (
+                      <ToggleLeft size={28} className="text-slate-300 dark:text-slate-700 shrink-0" />
+                    )}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between pl-2">
+                  <div className="flex flex-col">
+                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-350">Storefront</span>
+                    <span className="text-[9px] text-slate-400">Show Web</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowInStorefront(!showInStorefront)}
+                    className="text-slate-500 hover:text-indigo-600 transition"
+                  >
+                    {showInStorefront ? (
                       <ToggleRight size={28} className="text-indigo-600 shrink-0" />
                     ) : (
                       <ToggleLeft size={28} className="text-slate-300 dark:text-slate-700 shrink-0" />
@@ -1317,6 +1548,15 @@ export default function ProductsTab({
                               OOS
                             </span>
                           )}
+                          {p.showInStorefront === false ? (
+                            <span className="text-[8px] bg-rose-50 text-rose-500 dark:bg-rose-950/20 dark:text-rose-400 font-extrabold px-1.5 py-0.2 rounded-full uppercase tracking-wider">
+                              Hidden
+                            </span>
+                          ) : (
+                            <span className="text-[8px] bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400 font-extrabold px-1.5 py-0.2 rounded-full uppercase tracking-wider">
+                              Storefront
+                            </span>
+                          )}
                         </div>
                         
                         <div className="text-[11px] text-slate-400 dark:text-slate-500">
@@ -1345,6 +1585,48 @@ export default function ProductsTab({
                                 LKR {p.price.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                               </span>
                             )}
+                          </div>                           {/* Financials & Stock Status */}
+                          <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-100 dark:border-slate-800 grid grid-cols-3 gap-2 text-[10px] text-slate-500 text-left">
+                            <div>
+                              <span className="block text-[8px] text-slate-400 uppercase tracking-wider font-extrabold mb-0.5">Inventory Status</span>
+                              {p.isService ? (
+                                <span className="inline-flex items-center gap-1 text-[9.5px] text-indigo-650 dark:text-indigo-400 font-bold bg-indigo-50 dark:bg-indigo-950/20 px-1.5 py-0.5 rounded">
+                                  <Wrench size={10} /> Service
+                                </span>
+                              ) : (
+                                <span className={`inline-flex items-center gap-1 text-[9.5px] font-extrabold px-1.5 py-0.5 rounded ${Number(p.stock || 0) === 0 ? 'text-rose-600 bg-rose-50 dark:bg-rose-950/20' : Number(p.stock || 0) <= 2 ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/20 animate-pulse' : 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20'}`}>
+                                  {p.stock || 0} In Stock
+                                </span>
+                              )}
+                            </div>
+                            <div>
+                              <span className="block text-[8px] text-slate-400 uppercase tracking-wider font-extrabold mb-0.5">Admin Financials</span>
+                              <div className="space-y-0.5">
+                                <span className="block font-mono text-[9px] font-semibold text-slate-600 dark:text-slate-300">
+                                  Cost: LKR {(p.purchasePrice || 0).toLocaleString()}
+                                </span>
+                                {p.price > 0 && (
+                                  <span className="block text-[8.5px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                    Margin: {(((hasDiscount ? (p.discountedPrice || p.price) : p.price) - (p.purchasePrice || 0)) / (hasDiscount ? (p.discountedPrice || p.price) : p.price) * 100).toFixed(1)}%
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="block text-[8px] text-slate-400 uppercase tracking-wider font-extrabold mb-0.5">Total Valuations</span>
+                              {p.isService ? (
+                                <span className="block text-[9px] text-slate-400 italic">N/A (Service)</span>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  <span className="block font-mono text-[9px] font-semibold text-slate-650 dark:text-slate-300">
+                                    Retail: LKR {((hasDiscount ? (p.discountedPrice || p.price) : p.price) * (p.stock || 0)).toLocaleString()}
+                                  </span>
+                                  <span className="block font-mono text-[8.5px] text-slate-450 dark:text-slate-400">
+                                    Cost: LKR {((p.purchasePrice || 0) * (p.stock || 0)).toLocaleString()}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
                           </div>
 
                           {p.customFields && p.customFields.length > 0 && (

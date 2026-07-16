@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CompanyProfile, Product, Invoice, UserProfile, Quotation, Category, TrashItem } from './types';
+import { CompanyProfile, Product, Invoice, UserProfile, Quotation, Category, TrashItem, ExpenseRecord } from './types';
 import ProfileTab from './components/ProfileTab';
 import ProductsTab from './components/ProductsTab';
 import NewBillTab from './components/NewBillTab';
@@ -14,7 +14,7 @@ import PublicStorefront from './components/PublicStorefront';
 import InvoiceDocument from './components/InvoiceDocument';
 import MobileA4ScaledPreview from './components/MobileA4ScaledPreview';
 import { downloadInvoiceAsPdf } from './utils/pdfGenerator';
-import { db, auth, isFirebaseConfigured, handleFirestoreError, OperationType, createAuthUserForStaff, syncAuthUserCredentialsForStaff, deleteAuthUserForStaff } from './lib/firebase';
+import { db, auth, isFirebaseConfigured, handleFirestoreError, OperationType, createAuthUserForStaff, syncAuthUserCredentialsForStaff, deleteAuthUserForStaff, cleanUndefined } from './lib/firebase';
 import { onAuthStateChanged, signOut, updatePassword, getRedirectResult } from 'firebase/auth';
 import { 
   collection, 
@@ -156,6 +156,7 @@ export default function App() {
   const [users, setUsers] = useState<UserProfile[]>(DEFAULT_USERS);
   const [categories, setCategories] = useState<Category[]>([]);
   const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
   
   // Current logged in operator
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -192,8 +193,36 @@ export default function App() {
       } else {
         setPublicStoreProducts(DEFAULT_PRODUCTS);
       }
+
+      // Real-Time Firebase subscriptions for public view
+      if (isFirebaseConfigured) {
+        const unsubPublicProfile = onSnapshot(doc(db, 'users', merchantUid, 'profile', 'store_details'), (docSnap) => {
+          if (docSnap.exists()) {
+            setPublicStoreProfile(docSnap.data() as CompanyProfile);
+          }
+        }, (error) => {
+          console.warn("Public profile Firestore subscription failed:", error);
+        });
+
+        const unsubPublicProducts = onSnapshot(collection(db, 'users', merchantUid, 'products'), (snapshot) => {
+          if (!snapshot.empty) {
+            const items: Product[] = [];
+            snapshot.forEach((d) => {
+              items.push(d.data() as Product);
+            });
+            setPublicStoreProducts(items);
+          }
+        }, (error) => {
+          console.warn("Public products Firestore subscription failed:", error);
+        });
+
+        return () => {
+          unsubPublicProfile();
+          unsubPublicProducts();
+        };
+      }
     }
-  }, [currentUser, users]);
+  }, [currentUser, users, isFirebaseConfigured]);
 
   // Dynamically compute cloud connection status based on active actual authenticated Firebase user session
   useEffect(() => {
@@ -205,7 +234,7 @@ export default function App() {
   const [activeDraft, setActiveDraft] = useState<Invoice | null>(null);
 
   const canWriteFirestore = () => {
-    return !!(isFirebaseConfigured && currentUser && auth?.currentUser && auth.currentUser.uid === currentUser.uid);
+    return !!(isFirebaseConfigured && currentUser);
   };
 
   // Public Online Viewing Mode
@@ -454,22 +483,18 @@ export default function App() {
       setProfile(DEFAULT_PROFILE);
       setProducts(DEFAULT_PRODUCTS);
       setInvoices([]);
+      setExpenses([]);
       return;
     }
 
-    // Admins do not handle business data
-    if (currentUser.role === 'admin') {
-      setProfile(DEFAULT_PROFILE);
-      setProducts([]);
-      setInvoices([]);
-      return;
-    }
+
 
     const userUid = currentUser.uid;
     const savedProfile = localStorage.getItem(`invoice_profile_${userUid}`);
     const savedProducts = localStorage.getItem(`invoice_products_${userUid}`);
     const savedInvoices = localStorage.getItem(`invoice_records_${userUid}`);
     const savedQuotations = localStorage.getItem(`quotation_records_${userUid}`);
+    const savedExpenses = localStorage.getItem(`expense_records_${userUid}`);
 
     if (savedProfile) {
       try {
@@ -524,6 +549,17 @@ export default function App() {
       setQuotations([]);
     }
 
+    if (savedExpenses) {
+      try {
+        setExpenses(JSON.parse(savedExpenses));
+      } catch (e) {
+        console.error("Error decoding expenses directory", e);
+        setExpenses([]);
+      }
+    } else {
+      setExpenses([]);
+    }
+
     const savedCategories = localStorage.getItem(`invoice_categories_${userUid}`);
     if (savedCategories) {
       try {
@@ -552,9 +588,7 @@ export default function App() {
   // Adjust active tab automatically based on roles on login
   useEffect(() => {
     if (currentUser) {
-      if (currentUser.role === 'admin') {
-        setActiveTab('admin-portal');
-      } else if (activeTab === 'admin-portal') {
+      if (activeTab === 'admin-portal') {
         setActiveTab('new-bill');
       }
     }
@@ -633,7 +667,10 @@ export default function App() {
       })
       .catch((err) => {
         console.warn("Error resolving Google Auth redirect credential alert:", err);
-        setRedirectError(err.code || err.message || "Google Redirect Auth failed.");
+        const savedAuthType = localStorage.getItem('invoice_auth_type');
+        if (savedAuthType === 'google') {
+          setRedirectError(err.code || err.message || "Google Redirect Auth failed.");
+        }
       });
 
     // Subscribe to Firebase Authentication triggers
@@ -648,13 +685,15 @@ export default function App() {
         return;
       }
 
+      const emailLower = firebaseUser.email.toLowerCase();
+      const isGoogleProvider = firebaseUser.providerData?.some(p => p.providerId === 'google.com');
+
       if (savedAuthType === 'manual') {
         setAuthInitialized(true);
         return;
       }
 
-      const emailLower = firebaseUser.email.toLowerCase();
-      const isBootstrappedAdmin = emailLower === 'kryptontechlk@gmail.com';
+      const isBootstrappedAdmin = emailLower === 'kryptontechlk@gmail.com' || emailLower === 'kosala0432@gmail.com';
 
       try {
         // Query users catalog in Firestore
@@ -967,6 +1006,19 @@ export default function App() {
       console.warn("Trash sync bypass check", error);
     });
 
+    // Subscribe Expenses subcollection under users
+    const unsubExpenses = onSnapshot(collection(db, 'users', currentUser.uid, 'expenses'), (snapshot) => {
+      const list: ExpenseRecord[] = [];
+      snapshot.forEach((d) => {
+        list.push(d.data() as ExpenseRecord);
+      });
+      list.sort((a, b) => b.date.localeCompare(a.date));
+      setExpenses(list);
+      localStorage.setItem(`expense_records_${currentUser.uid}`, JSON.stringify(list));
+    }, (error) => {
+      console.warn("Expenses sync bypass check", error);
+    });
+
     return () => {
       unsubInvoices();
       unsubQuotations();
@@ -974,13 +1026,26 @@ export default function App() {
       unsubProfile();
       unsubCategories();
       unsubTrash();
+      unsubExpenses();
     };
   }, [currentUser, firebaseUser]);
 
   // Session login trigger
   const handleLoginSuccess = async (profileData: UserProfile) => {
-    let authType = 'manual';
-    if (isFirebaseConfigured && auth?.currentUser) {
+    const savedAuthType = localStorage.getItem('invoice_auth_type');
+    let authType = savedAuthType || 'manual';
+    if (profileData.uid === 'simulated-operator-id') {
+      authType = 'manual';
+    } else if (authType === 'manual' && isFirebaseConfigured) {
+      if (auth?.currentUser) {
+        const isGoogleProvider = auth?.currentUser?.providerData?.some(p => p.providerId === 'google.com');
+        authType = isGoogleProvider ? 'google' : 'email';
+      } else {
+        authType = 'email';
+      }
+    }
+
+    if (isFirebaseConfigured && auth?.currentUser && profileData.uid !== 'simulated-operator-id') {
       // Force match security UID to avoid local/cloud key misalignment
       profileData.uid = auth.currentUser.uid;
       setFirebaseUser(auth.currentUser);
@@ -1306,7 +1371,7 @@ export default function App() {
 
     if (canWriteFirestore()) {
       try {
-        await setDoc(doc(db, 'users', currentUser.uid, 'products', newProduct.id), productWithOwner);
+        await setDoc(doc(db, 'users', currentUser.uid, 'products', newProduct.id), cleanUndefined(productWithOwner));
       } catch (e) {
         console.error("Firestore add product error", e);
       }
@@ -1323,7 +1388,7 @@ export default function App() {
 
     if (canWriteFirestore()) {
       try {
-        await setDoc(doc(db, 'users', currentUser.uid, 'products', updatedProduct.id), productWithOwner);
+        await setDoc(doc(db, 'users', currentUser.uid, 'products', updatedProduct.id), cleanUndefined(productWithOwner));
       } catch (e) {
         console.error("Firestore update product error", e);
       }
@@ -1390,7 +1455,7 @@ export default function App() {
     // Async push to Firestore
     if (canWriteFirestore()) {
       try {
-        await setDoc(doc(db, 'users', currentUser.uid, 'invoices', newInvoice.id), invoiceWithOwner);
+        await setDoc(doc(db, 'users', currentUser.uid, 'invoices', newInvoice.id), cleanUndefined(invoiceWithOwner));
       } catch (e) {
         console.error("Firestore save invoice error", e);
       }
@@ -1468,7 +1533,7 @@ export default function App() {
     // Async push to Firestore
     if (canWriteFirestore()) {
       try {
-        await setDoc(doc(db, 'users', currentUser.uid, 'quotations', newQuotation.id), quotationWithOwner);
+        await setDoc(doc(db, 'users', currentUser.uid, 'quotations', newQuotation.id), cleanUndefined(quotationWithOwner));
       } catch (e) {
         console.error("Firestore save quotation error", e);
       }
@@ -1526,6 +1591,39 @@ export default function App() {
         }
       } catch (e) {
         console.error("Firestore clear all quotations error", e);
+      }
+    }
+  };
+
+  const handleAddExpense = async (newExpense: ExpenseRecord) => {
+    const expenseWithOwner = { ...newExpense, ownerId: currentUser?.uid || 'default' };
+    const updated = [expenseWithOwner, ...expenses];
+    setExpenses(updated);
+    if (currentUser) {
+      localStorage.setItem(`expense_records_${currentUser.uid}`, JSON.stringify(updated));
+    }
+
+    if (canWriteFirestore()) {
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid, 'expenses', newExpense.id), expenseWithOwner);
+      } catch (e) {
+        console.error("Firestore add expense error", e);
+      }
+    }
+  };
+
+  const handleDeleteExpense = async (id: string) => {
+    const updated = expenses.filter(e => e.id !== id);
+    setExpenses(updated);
+    if (currentUser) {
+      localStorage.setItem(`expense_records_${currentUser.uid}`, JSON.stringify(updated));
+    }
+
+    if (canWriteFirestore()) {
+      try {
+        await deleteDoc(doc(db, 'users', currentUser.uid, 'expenses', id));
+      } catch (e) {
+        console.error("Firestore delete expense error", e);
       }
     }
   };
@@ -1593,7 +1691,7 @@ export default function App() {
         localStorage.setItem(`invoice_products_${currentUser.uid}`, JSON.stringify(updated));
       }
       if (canWriteFirestore()) {
-        await setDoc(doc(db, 'users', currentUser.uid, 'products', data.id), data);
+        await setDoc(doc(db, 'users', currentUser.uid, 'products', data.id), cleanUndefined(data));
       }
     } else if (item.type === 'invoice') {
       const updated = [data, ...invoices];
@@ -1602,7 +1700,7 @@ export default function App() {
         localStorage.setItem(`invoice_records_${currentUser.uid}`, JSON.stringify(updated));
       }
       if (canWriteFirestore()) {
-        await setDoc(doc(db, 'users', currentUser.uid, 'invoices', data.id), data);
+        await setDoc(doc(db, 'users', currentUser.uid, 'invoices', data.id), cleanUndefined(data));
       }
     } else if (item.type === 'quotation') {
       const updated = [data, ...quotations];
@@ -1611,7 +1709,7 @@ export default function App() {
         localStorage.setItem(`quotation_records_${currentUser.uid}`, JSON.stringify(updated));
       }
       if (canWriteFirestore()) {
-        await setDoc(doc(db, 'users', currentUser.uid, 'quotations', data.id), data);
+        await setDoc(doc(db, 'users', currentUser.uid, 'quotations', data.id), cleanUndefined(data));
       }
     } else if (item.type === 'category') {
       const updated = [...categories, data];
@@ -1674,15 +1772,15 @@ export default function App() {
 
     if (canWriteFirestore()) {
       try {
-        await setDoc(doc(db, 'users', currentUser.uid, 'profile', 'store_details'), data.profile);
+        await setDoc(doc(db, 'users', currentUser.uid, 'profile', 'store_details'), cleanUndefined(data.profile));
         for (const p of data.products) {
-          await setDoc(doc(db, 'users', currentUser.uid, 'products', p.id), { ...p, ownerId: currentUser.uid });
+          await setDoc(doc(db, 'users', currentUser.uid, 'products', p.id), cleanUndefined({ ...p, ownerId: currentUser.uid }));
         }
         for (const inv of data.invoices) {
-          await setDoc(doc(db, 'users', currentUser.uid, 'invoices', inv.id), { ...inv, ownerId: currentUser.uid });
+          await setDoc(doc(db, 'users', currentUser.uid, 'invoices', inv.id), cleanUndefined({ ...inv, ownerId: currentUser.uid }));
         }
         for (const q of data.quotations) {
-          await setDoc(doc(db, 'users', currentUser.uid, 'quotations', q.id), { ...q, ownerId: currentUser.uid });
+          await setDoc(doc(db, 'users', currentUser.uid, 'quotations', q.id), cleanUndefined({ ...q, ownerId: currentUser.uid }));
         }
         for (const cat of data.categories) {
           await setDoc(doc(db, 'users', currentUser.uid, 'categories', cat.id), { ...cat, ownerId: currentUser.uid });
@@ -1855,10 +1953,10 @@ export default function App() {
           // Also save to live cloud Firestore if configured
           if (isFirebaseConfigured) {
             try {
-              await setDoc(doc(db, 'users', publicMerchantUid, 'quotations', quotation.id), {
+              await setDoc(doc(db, 'users', publicMerchantUid, 'quotations', quotation.id), cleanUndefined({
                 ...quotation,
                 ownerId: publicMerchantUid
-              });
+              }));
               console.log("Live saved public quotation to Firestore:", quotation.id);
             } catch (e) {
               console.error("Failed to save public quotation to Firestore:", e);
@@ -1911,11 +2009,11 @@ export default function App() {
             </div>
 
             {/* Navigation Tabs List */}
-            <nav className="flex space-x-1 sm:space-x-2 relative z-0 overflow-x-auto no-scrollbar max-w-full sm:max-w-none py-1 select-none flex-nowrap">
+            <nav className="flex items-center space-x-1 sm:space-x-1.5 md:space-x-2 relative z-0 overflow-x-auto no-scrollbar max-w-full py-1 select-none flex-nowrap scroll-smooth">
               <>
                 <button
                   onClick={() => setActiveTab('new-bill')}
-                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                  className={`relative inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 md:px-4 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shrink-0 ${
                     activeTab === 'new-bill' 
                       ? 'text-white' 
                       : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/60'
@@ -1928,15 +2026,15 @@ export default function App() {
                       transition={{ type: "spring", stiffness: 350, damping: 28 }}
                     />
                   )}
-                  <span className="relative z-10 flex items-center gap-1.5">
+                  <span className="relative z-10 flex items-center gap-1 sm:gap-1.5">
                     <CreditCard size={14} />
-                    <span className="hidden sm:inline">New Bill</span>
+                    <span>New Bill</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTab('products')}
-                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                  className={`relative inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 md:px-4 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shrink-0 ${
                     activeTab === 'products' 
                       ? 'text-white' 
                       : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/60'
@@ -1949,15 +2047,15 @@ export default function App() {
                       transition={{ type: "spring", stiffness: 350, damping: 28 }}
                     />
                   )}
-                  <span className="relative z-10 flex items-center gap-1.5">
+                  <span className="relative z-10 flex items-center gap-1 sm:gap-1.5">
                     <ShoppingBag size={14} />
-                    <span className="hidden sm:inline">Products</span>
+                    <span>Products</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTab('profile')}
-                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                  className={`relative inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 md:px-4 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shrink-0 ${
                     activeTab === 'profile' 
                       ? 'text-white' 
                       : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/60'
@@ -1970,15 +2068,17 @@ export default function App() {
                       transition={{ type: "spring", stiffness: 350, damping: 28 }}
                     />
                   )}
-                  <span className="relative z-10 flex items-center gap-1.5">
+                  <span className="relative z-10 flex items-center gap-1 sm:gap-1.5">
                     <Store size={14} />
-                    <span className="hidden sm:inline">Store Profile & Settings</span>
+                    <span className="hidden xl:inline">Store Profile & Settings</span>
+                    <span className="hidden sm:inline xl:hidden">Store Settings</span>
+                    <span className="inline sm:hidden">Store</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTab('records')}
-                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                  className={`relative inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 md:px-4 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shrink-0 ${
                     activeTab === 'records' 
                       ? 'text-white' 
                       : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/60'
@@ -1991,9 +2091,9 @@ export default function App() {
                       transition={{ type: "spring", stiffness: 350, damping: 28 }}
                     />
                   )}
-                  <span className="relative z-10 flex items-center gap-1.5">
+                  <span className="relative z-10 flex items-center gap-1 sm:gap-1.5">
                     <History size={14} />
-                    <span className="hidden sm:inline">Records</span>
+                    <span>Records</span>
                     {invoices.length > 0 && (
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono font-black ${
                         activeTab === 'records' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
@@ -2006,7 +2106,7 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTab('quotations')}
-                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                  className={`relative inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 md:px-4 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shrink-0 ${
                     activeTab === 'quotations' 
                       ? 'text-white' 
                       : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/60'
@@ -2019,9 +2119,9 @@ export default function App() {
                       transition={{ type: "spring", stiffness: 350, damping: 28 }}
                     />
                   )}
-                  <span className="relative z-10 flex items-center gap-1.5">
+                  <span className="relative z-10 flex items-center gap-1 sm:gap-1.5">
                     <FileSignature size={14} />
-                    <span className="hidden sm:inline">Quotations</span>
+                    <span>Quotations</span>
                     {quotations.length > 0 && (
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono font-black ${
                         activeTab === 'quotations' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
@@ -2034,7 +2134,7 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTab('analytics')}
-                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                  className={`relative inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 md:px-4 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shrink-0 ${
                     activeTab === 'analytics' 
                       ? 'text-white' 
                       : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/60'
@@ -2047,15 +2147,15 @@ export default function App() {
                       transition={{ type: "spring", stiffness: 350, damping: 28 }}
                     />
                   )}
-                  <span className="relative z-10 flex items-center gap-1.5">
+                  <span className="relative z-10 flex items-center gap-1 sm:gap-1.5">
                     <BarChart3 size={14} />
-                    <span className="hidden sm:inline">Analytics</span>
+                    <span>Analytics</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTab('recycle-bin')}
-                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+                  className={`relative inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 md:px-4 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shrink-0 ${
                     activeTab === 'recycle-bin' 
                       ? 'text-white' 
                       : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/60'
@@ -2068,9 +2168,10 @@ export default function App() {
                       transition={{ type: "spring", stiffness: 350, damping: 28 }}
                     />
                   )}
-                  <span className="relative z-10 flex items-center gap-1.5">
+                  <span className="relative z-10 flex items-center gap-1 sm:gap-1.5">
                     <Trash2 size={14} />
-                    <span className="hidden sm:inline">Recycle Bin</span>
+                    <span className="hidden xl:inline">Recycle Bin</span>
+                    <span className="inline xl:hidden">Recycle</span>
                     {trashItems.length > 0 && (
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono font-black ${
                         activeTab === 'recycle-bin' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-650 dark:bg-rose-950/40 dark:text-rose-400'
@@ -2083,28 +2184,7 @@ export default function App() {
               </>
 
               {/* Admin Portal Tab Trigger (Only Visible to Admin Operators) */}
-              {currentUser.role === 'admin' && (
-                <button
-                  onClick={() => setActiveTab('admin-portal')}
-                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
-                    activeTab === 'admin-portal' 
-                      ? 'text-white' 
-                      : 'text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40'
-                  }`}
-                >
-                  {activeTab === 'admin-portal' && (
-                    <motion.div 
-                      layoutId="activeTabIndicator" 
-                      className="absolute inset-0 bg-indigo-600 rounded-xl shadow-xs z-0" 
-                      transition={{ type: "spring", stiffness: 350, damping: 28 }}
-                    />
-                  )}
-                  <span className="relative z-10 flex items-center gap-1.5">
-                    <ShieldCheck size={14} />
-                    <span className="hidden sm:inline">Admin Portal</span>
-                  </span>
-                </button>
-              )}
+
             </nav>
 
             {/* Quick Profile monograms, Dark Mode toggle & Disconnect Logout Buttons */}
@@ -2138,7 +2218,7 @@ export default function App() {
         </div>
       </header>
 
-      {isFirebaseConfigured && !isCloudConnected && (
+      {isFirebaseConfigured && authInitialized && !isCloudConnected && (
         <div className="bg-amber-500 border-b border-amber-600 text-white px-4 py-2.5 text-center text-xs font-semibold flex flex-wrap items-center justify-center gap-2.5 no-print animate-fadeIn">
           <span>⚠️ <strong>Simulated Offline Mode:</strong> Changes are only saved in this browser. To sync invoices & operators across your phone and laptop in real-time, please sign out and sign in using Google or your registered email/password credentials.</span>
           <button 
@@ -2225,6 +2305,10 @@ export default function App() {
                   onDeleteQuotation={handleDeleteQuotation} 
                   onClearAllQuotations={handleClearAllQuotations} 
                   onConvertToInvoice={handleConvertQuotationToInvoice}
+                  onEditQuotation={(q) => {
+                    setActiveDraft(q);
+                    setActiveTab('new-bill');
+                  }}
                 />
               )}
 
@@ -2261,6 +2345,10 @@ export default function App() {
                   onAddCategory={handleAddCategory}
                   onUpdateCategory={handleUpdateCategory}
                   onDeleteCategory={handleDeleteCategory}
+                  expenses={expenses}
+                  onAddExpense={handleAddExpense}
+                  onDeleteExpense={handleDeleteExpense}
+                  invoices={invoices}
                 />
               )}
             </motion.div>

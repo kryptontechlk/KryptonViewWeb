@@ -1,11 +1,11 @@
 {
-  "projectId": "gen-lang-client-0447798202",
-  "appId": "1:1058641375441:web:103392a5896c0dce4e95f0",
-  "apiKey": "AIzaSyCB0S16z9N1cuY-TXXAzfoOxaw6qLX5Reo",
-  "authDomain": "gen-lang-client-0447798202.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-kryptonview-f4de6c47-2264-4137-b00c-4304fb3ca454",
-  "storageBucket": "gen-lang-client-0447798202.firebasestorage.app",
-  "messagingSenderId": "1058641375441",
-  "measurementId": "",
-  "oAuthClientId": "1058641375441-3d3pd53u652rfhhcjc0334vbijtcok16.apps.googleusercontent.com"
+  "projectId": "kryptonview-6bffa",
+  "appId": "1:346942643750:web:5e8a67ac855aa99f12d0e7",
+  "apiKey": "AIzaSyCWXzkM34gw3fd4_WgazK2hDDCspRoflKk",
+  "authDomain": "kryptonview-6bffa.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "kryptonview-6bffa.firebasestorage.app",
+  "messagingSenderId": "346942643750",
+  "measurementId": "G-PB79XYXC1J",
+  "oAuthClientId": ""
 }

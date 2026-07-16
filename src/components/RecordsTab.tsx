@@ -4,7 +4,7 @@ import { Invoice, CompanyProfile } from '../types';
 import InvoiceDocument from './InvoiceDocument';
 import MobileA4ScaledPreview from './MobileA4ScaledPreview';
 import { downloadInvoiceAsPdf } from '../utils/pdfGenerator';
-import { getGmailComposeLink, formatInvoiceMessage } from '../utils/mailHelper';
+import { getGmailComposeLink, formatInvoiceMessage, getWhatsAppLink, cleanSriLankanPhoneNumber } from '../utils/mailHelper';
 import { 
   Search, 
   FileText, 
@@ -25,7 +25,8 @@ import {
   Truck,
   Info,
   ExternalLink,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Shield
 } from 'lucide-react';
 
 interface RecordsTabProps {
@@ -214,7 +215,7 @@ export default function RecordsTab({
     }
   };
 
-  const handleSendLocalEmail = async (invoice: Invoice) => {
+  const handleSendLocalEmail = (invoice: Invoice) => {
     const emailField = invoice.customerCustomFields?.find(f => f.key.toLowerCase() === 'email' || f.key.toLowerCase() === 'customer email');
     const defaultEmail = invoice.customerEmail || (emailField ? emailField.value : '');
 
@@ -233,51 +234,52 @@ export default function RecordsTab({
     // Ask operator for preferred client
     const useGmail = confirm("Press OK to compose using Gmail Web interface.\nPress Cancel to use your system's Default Mail Client (Outlook, Apple Mail, Mail app).");
 
-    // Set active PDF generating invoice to render it off-screen
-    setActivePdfGeneratingInvoice(invoice);
-    // Wait brief 100ms for React render and repaint
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Automatically trigger local PDF download so they can attach it
-    await downloadInvoiceAsPdf(invoice, 'invoice-document');
-
-    // Clean up
-    setActivePdfGeneratingInvoice(null);
-
-    let link = '';
     const subject = `Invoice ${invoice.invoiceNumber} from ${profile.name || 'Our Store'}`;
     const body = formatInvoiceMessage(invoice, profile.name, profile.phone);
 
+    // Copy to clipboard as backup non-blockingly
+    navigator.clipboard.writeText(body).catch(err => {
+      console.warn("Could not copy backup text to clipboard:", err);
+    });
+
+    let link = '';
     if (useGmail) {
       link = getGmailComposeLink(invoice, profile, recipient.trim());
     } else {
       link = `mailto:${encodeURIComponent(recipient.trim())}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     }
     
-    // Bypass iframe popup block
+    // Bypass iframe popup block synchronously
     try {
       const a = document.createElement('a');
       a.href = link;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
+      if (useGmail) {
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+      }
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
     } catch (popupErr) {
       console.error(popupErr);
-      const confirmCopy = confirm("Your browser blocked opening your email app. Copy compose URL link directly to clipboard?");
-      if (confirmCopy) {
-        navigator.clipboard.writeText(link);
-        alert("Copied successfully! You can paste the link in your browser bar.");
-      }
+      navigator.clipboard.writeText(link);
+      alert("Mail compose link prepared! Opened email composer.");
     }
+
+    // Trigger PDF download in the background off-screen non-blockingly
+    setActivePdfGeneratingInvoice(invoice);
+    setTimeout(() => {
+      downloadInvoiceAsPdf(invoice, 'invoice-document')
+        .catch(err => console.warn("Background PDF generation failed:", err))
+        .finally(() => setActivePdfGeneratingInvoice(null));
+    }, 100);
   };
 
   const handleShareLocalWhatsApp = (invoice: Invoice) => {
     const whatsappNumber = invoice.customerWhatsapp || invoice.customerPhone;
     let recipient = whatsappNumber ? whatsappNumber.trim() : '';
     if (!recipient) {
-      const promptedRecipient = prompt(`Composing WhatsApp message for invoice ${invoice.invoiceNumber}. Verify phone number (with country code):`);
+      const promptedRecipient = prompt(`Composing WhatsApp message for invoice ${invoice.invoiceNumber}. Verify phone number (e.g., 0771234567 or 94771234567):`);
       if (promptedRecipient === null) return;
       recipient = promptedRecipient.trim();
     }
@@ -287,16 +289,17 @@ export default function RecordsTab({
       return;
     }
     
-    let cleanedPhone = recipient.trim().replace(/[^0-9]/g, '');
-    if (cleanedPhone.startsWith('0') && cleanedPhone.length === 10) {
-      cleanedPhone = '94' + cleanedPhone.substring(1);
-    }
-    
+    const cleanedPhone = cleanSriLankanPhoneNumber(recipient);
     const message = formatInvoiceMessage(invoice, profile.name, profile.phone);
 
-    const waLink = `https://wa.me/${cleanedPhone}?text=${encodeURIComponent(message)}`;
+    // Copy to clipboard as backup non-blockingly
+    navigator.clipboard.writeText(message).catch(err => {
+      console.warn("Could not copy backup text to clipboard:", err);
+    });
+
+    const waLink = getWhatsAppLink(cleanedPhone, message);
     
-    // Bypass iframe popup block
+    // Bypass iframe popup block synchronously
     try {
       const a = document.createElement('a');
       a.href = waLink;
@@ -307,12 +310,16 @@ export default function RecordsTab({
       document.body.removeChild(a);
     } catch (popupErr) {
       console.error(popupErr);
-      const confirmCopy = confirm("Popup opening seemed to have failed or was blocked. Copy WhatsApp link directly to clipboard?");
-      if (confirmCopy) {
-        navigator.clipboard.writeText(waLink);
-        alert("WhatsApp link copied to clipboard successfully!");
-      }
+      window.open(waLink, '_blank');
     }
+
+    // Trigger PDF download in the background off-screen non-blockingly
+    setActivePdfGeneratingInvoice(invoice);
+    setTimeout(() => {
+      downloadInvoiceAsPdf(invoice, 'invoice-document')
+        .catch(err => console.warn("Background PDF generation failed:", err))
+        .finally(() => setActivePdfGeneratingInvoice(null));
+    }, 100);
   };
 
   return (
@@ -937,8 +944,44 @@ export default function RecordsTab({
                       </div>
                     </div>
                   </div>
-                </div>
 
+                  {/* Private Profitability Analysis for Admins/Operators */}
+                  {(() => {
+                    const totalCost = quickViewInvoice.items.reduce((sum, item) => sum + ((item.purchasePrice || 0) * item.quantity), 0);
+                    const netProfit = quickViewInvoice.total - totalCost;
+                    const margin = quickViewInvoice.total > 0 ? (netProfit / quickViewInvoice.total) * 105 : 0; // standard margin
+                    const marginPct = quickViewInvoice.total > 0 ? (netProfit / quickViewInvoice.total) * 100 : 0;
+
+                    return (
+                      <div className="pt-2">
+                        <div className="bg-slate-100 dark:bg-slate-850 rounded-2xl p-3.5 space-y-2 border border-slate-200 dark:border-slate-800">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                              <Shield size={11} className="text-indigo-600 dark:text-indigo-400" />
+                              <span>Private P&L Breakdown (Admin Only)</span>
+                            </span>
+                            <span className="text-[9px] bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 px-1.5 py-0.2 rounded font-black font-mono">SECURED</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <span className="block text-[9px] text-slate-400 uppercase tracking-wider mb-0.5">Direct Cost (COGS)</span>
+                              <span className="font-mono font-bold text-slate-700 dark:text-slate-300">LKR {totalCost.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[9px] text-slate-400 uppercase tracking-wider mb-0.5">Gross Profit Margin</span>
+                              <span className={`font-mono font-bold ${netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>{marginPct.toFixed(1)}%</span>
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center pt-1.5 border-t border-slate-200 dark:border-slate-800">
+                            <span className="text-[10px] uppercase font-bold text-slate-400">Net Profit / Labaya</span>
+                            <span className={`font-mono text-sm font-black ${netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>LKR {netProfit.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                </div>
               </div>
 
               {/* Items Table details ledger */}

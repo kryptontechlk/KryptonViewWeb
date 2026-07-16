@@ -26,7 +26,8 @@ import {
   Sliders,
   Shield,
   Star,
-  Info
+  Info,
+  LogIn
 } from 'lucide-react';
 
 interface PublicStorefrontProps {
@@ -84,7 +85,7 @@ export default function PublicStorefront({
   // Slides data for slideshow - showcasing products or premium tech slides
   const slides = useMemo(() => {
     // 1. Get products that have images
-    const productsWithImages = products.filter(p => p.images && p.images.length > 0 && p.isAvailable !== false);
+    const productsWithImages = products.filter(p => p.images && p.images.length > 0 && p.isAvailable !== false && p.showInStorefront !== false);
     
     if (productsWithImages.length > 0) {
       return productsWithImages.slice(0, 5).map((p, idx) => ({
@@ -166,6 +167,7 @@ export default function PublicStorefront({
   // Filtered and Sorted catalog items
   const sortedAndFilteredProducts = useMemo(() => {
     let result = products.filter(p => {
+      if (p.showInStorefront === false) return false;
       const actualPrice = p.discountedPrice || p.price;
       const matchesSearch = 
         p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -197,14 +199,14 @@ export default function PublicStorefront({
 
   // Best seller items
   const bestSellers = useMemo(() => {
-    return products.filter(p => p.isBestSeller && p.isAvailable !== false).slice(0, 4);
+    return products.filter(p => p.isBestSeller && p.isAvailable !== false && p.showInStorefront !== false).slice(0, 4);
   }, [products]);
 
   // Selected/Featured products from Admin or general fallback
   const featuredProducts = useMemo(() => {
-    const fromAdmin = products.filter(p => p.isBestSeller && p.isAvailable !== false);
+    const fromAdmin = products.filter(p => p.isBestSeller && p.isAvailable !== false && p.showInStorefront !== false);
     if (fromAdmin.length > 0) return fromAdmin.slice(0, 8);
-    return products.filter(p => p.isAvailable !== false).slice(0, 8);
+    return products.filter(p => p.isAvailable !== false && p.showInStorefront !== false).slice(0, 8);
   }, [products]);
 
   // Default Services in case none configured
@@ -435,9 +437,10 @@ export default function PublicStorefront({
             {/* Portal login gateway link */}
             <button
               onClick={onOpenLogin}
-              className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100 rounded-xl shadow-xs transition duration-150 cursor-pointer border-none"
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-250 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 dark:border-slate-700 rounded-lg shadow-2xs transition duration-150 cursor-pointer h-7"
             >
-              <span>Operator Login</span>
+              <LogIn size={11} strokeWidth={2.5} />
+              <span>Login</span>
             </button>
 
             {/* Mobile menu trigger */}
@@ -495,9 +498,9 @@ export default function PublicStorefront({
                 onOpenLogin();
                 setMobileMenuOpen(false);
               }}
-              className="w-full text-center py-2.5 bg-slate-900 text-white dark:bg-white dark:text-slate-900 rounded-xl text-xs font-bold mt-2"
+              className="w-full text-center py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold mt-2"
             >
-              Operator Portal Login
+              Portal Login
             </button>
           </motion.div>
         )}
@@ -1431,9 +1434,9 @@ export default function PublicStorefront({
                         </div>
 
                         <div>
-                          <label className="block text-[11px] font-bold text-slate-500 uppercase">Custom Requests / Notes</label>
+                          <label className="block text-[11px] font-bold text-indigo-650 dark:text-indigo-450 uppercase">Other Services & Additional Requirements (Custom Requests)</label>
                           <textarea
-                            placeholder="Mention if you require specialized upgrades, custom liquid cooling configurations, operating system installations..."
+                            placeholder="Add other services and other things you want here. Our team will prepare and add them to your final quotation..."
                             value={quoteNotes}
                             onChange={(e) => setQuoteNotes(e.target.value)}
                             rows={3}

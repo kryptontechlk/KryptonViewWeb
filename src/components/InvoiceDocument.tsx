@@ -11,6 +11,7 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
   const actualIsQuotation = isQuotation || 'quotationNumber' in invoice;
   const docNumber = actualIsQuotation ? (invoice as Quotation).quotationNumber : (invoice as Invoice).invoiceNumber;
   const validUntil = actualIsQuotation ? (invoice as Quotation).validUntil : undefined;
+  const hasProductDiscount = typeof invoice.totalProductDiscount === 'number' && invoice.totalProductDiscount > 0;
 
   const findDetail = (keywords: string[]) => {
     const detail = profile.extraDetails?.find(d => 
@@ -54,8 +55,8 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
   if (actualIsQuotation) {
     return (
       <div 
-        id="invoice-document"
-        className="bg-white text-slate-900 p-8 sm:p-12 border border-slate-300 rounded-2xl max-w-4xl mx-auto premium-shadow print-card print:border-none print:shadow-none font-sans"
+        id={`invoice-document-${invoice.id || 'default'}`}
+        className="bg-white text-slate-900 pt-3 pb-8 px-8 sm:pt-4 sm:pb-12 sm:px-12 border border-slate-300 rounded-2xl max-w-4xl mx-auto premium-shadow print-card print:border-none print:shadow-none font-sans"
       >
         {/* Header Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start justify-between pb-6 mb-6">
@@ -98,16 +99,16 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
             <div className="w-full max-w-sm border border-slate-300 rounded-lg overflow-hidden shadow-xs bg-white">
               <table className="w-full border-collapse text-xs">
                 <tbody>
-                  <tr style={{ backgroundColor: qAccentColor }} className="text-white">
-                    <td className="border-r border-slate-200/25 px-3 py-1.5 font-bold text-[10px] text-center uppercase font-mono w-1/2">QUOTE #</td>
+                  <tr style={{ backgroundColor: '#f1f5f9' }} className="text-slate-700 border-b border-slate-200">
+                    <td className="border-r border-slate-200 px-3 py-1.5 font-bold text-[10px] text-center uppercase font-mono w-1/2">QUOTE #</td>
                     <td className="px-3 py-1.5 font-bold text-[10px] text-center uppercase font-mono w-1/2">DATE</td>
                   </tr>
                   <tr className="border-b border-slate-200">
                     <td className="border-r border-slate-200 px-3 py-2 text-center font-bold text-slate-800 font-mono text-[11px]">{docNumber}</td>
                     <td className="px-3 py-2 text-center font-bold text-slate-800 font-mono text-[11px]">{invoice.date}</td>
                   </tr>
-                  <tr style={{ backgroundColor: qAccentColor }} className="text-white">
-                    <td className="border-r border-slate-200/25 px-3 py-1.5 font-bold text-[10px] text-center uppercase font-mono">CUSTOMER ID</td>
+                  <tr style={{ backgroundColor: '#f1f5f9' }} className="text-slate-700 border-b border-slate-200">
+                    <td className="border-r border-slate-200 px-3 py-1.5 font-bold text-[10px] text-center uppercase font-mono">CUSTOMER ID</td>
                     <td className="px-3 py-1.5 font-bold text-[10px] text-center uppercase font-mono">VALID UNTIL</td>
                   </tr>
                   <tr>
@@ -125,15 +126,13 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
         {/* Customer Info & Prepared By section */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6 items-stretch">
           <div className="border border-slate-300 rounded-xl overflow-hidden shadow-2xs bg-white">
-            <div style={{ backgroundColor: qAccentColor }} className="text-white px-3.5 py-1.5 font-bold text-[10px] tracking-wider font-mono">
+            <div style={{ backgroundColor: '#f1f5f9' }} className="text-slate-700 border-b border-slate-200 px-3.5 py-1.5 font-bold text-[10px] tracking-wider font-mono">
               CUSTOMER INFO
             </div>
-            <div className="p-4 text-xs space-y-1.5 text-slate-700">
+            <div className="p-4 text-xs space-y-1.5 text-slate-700 text-left">
               <div className="font-extrabold text-sm text-slate-900">{invoice.customerName || "Walking Customer"}</div>
-              {invoice.customerAddress ? (
-                <div className="whitespace-pre-line text-slate-600 leading-relaxed font-medium">{invoice.customerAddress}</div>
-              ) : (
-                <div className="text-slate-400 italic font-mono">[No Address Provided]</div>
+              {invoice.customerAddress && (
+                <div className="whitespace-pre-line text-slate-600 leading-relaxed font-medium text-left">{invoice.customerAddress}</div>
               )}
               {(invoice.customerPhone || invoice.customerEmail) && (
                 <div className="pt-1.5 border-t border-slate-100 mt-1.5 text-[11px] text-slate-500 font-medium">
@@ -145,9 +144,7 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
           </div>
 
           <div className="flex flex-col justify-end items-end text-right p-4">
-            <span className="italic text-slate-400 text-xs font-serif">{qPreparedByTitle}:</span>
-            <div className="font-extrabold text-slate-800 text-sm mt-1">{profile.signatureTitle || "Sales Representative"}</div>
-            <div className="text-[10px] text-slate-400 font-medium mt-0.5">{profile.name}</div>
+            {/* Kept header visual alignment balanced */}
           </div>
         </div>
 
@@ -163,27 +160,17 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
           </div>
         )}
 
-        {/* Description of Work block */}
-        {qShowDescriptionOfWork && (
-          <div className="border border-slate-300 rounded-xl overflow-hidden mt-6 shadow-2xs bg-white">
-            <div style={{ backgroundColor: qAccentColor }} className="text-white px-3.5 py-1.5 font-bold text-[10px] tracking-wider font-mono">
-              DESCRIPTION OF WORK
-            </div>
-            <div className="p-4 text-xs text-slate-700 min-h-[50px] leading-relaxed whitespace-pre-line bg-white font-medium">
-              {invoice.notes || "This estimate is for the standard supply of goods and services as list below."}
-            </div>
-          </div>
-        )}
+
 
         {/* Itemized Costs Table */}
         <div className="border border-slate-300 rounded-xl overflow-hidden mt-6 shadow-2xs bg-white">
           <table className="w-full border-collapse text-xs">
             <thead>
-              <tr style={{ backgroundColor: qAccentColor }} className="text-white uppercase text-[10px] font-bold tracking-wider">
-                <th className="py-2.5 px-3.5 border-r border-slate-300/20 text-left font-mono">{qColumnNameItem}</th>
-                <th className="py-2.5 px-2 border-r border-slate-300/20 text-center w-14 font-mono">{qColumnNameQty}</th>
-                <th className="py-2.5 px-3 border-r border-slate-300/20 text-right w-24 font-mono">{qColumnNamePrice}</th>
-                <th className="py-2.5 px-3.5 text-right w-28 font-mono">{qColumnNameAmount}</th>
+              <tr style={{ backgroundColor: '#f1f5f9' }} className="text-slate-700 uppercase text-[10px] font-bold tracking-wider border-b border-slate-200">
+                <th className="py-2.5 px-3.5 border-r border-slate-200 text-left font-mono">{qColumnNameItem}</th>
+                <th className="py-2.5 px-2 border-r border-slate-200 text-center w-14 font-mono">{qColumnNameQty}</th>
+                <th className="py-2.5 px-3 border-r border-slate-200 text-right w-36 font-mono">{qColumnNamePrice}</th>
+                <th className="py-2.5 px-3.5 text-right w-32 font-mono">{qColumnNameAmount}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -212,10 +199,22 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
                       {item.quantity}
                     </td>
                     <td className="py-2.5 px-3 border-r border-slate-200 text-right font-mono text-slate-600">
-                      {item.price.toFixed(2)}
+                      {item.useDiscount && typeof item.originalPrice === 'number' && item.originalPrice > item.price ? (
+                        <div>
+                          <span className="text-emerald-650 font-bold block">LKR {item.price.toFixed(2)}</span>
+                          <span className="line-through text-slate-400 text-[10px] block">LKR {item.originalPrice.toFixed(2)}</span>
+                        </div>
+                      ) : (
+                        <span>LKR {item.price.toFixed(2)}</span>
+                      )}
                     </td>
                     <td className="py-2.5 px-3.5 text-right font-mono font-extrabold text-slate-900">
-                      {(item.price * item.quantity).toFixed(2)}
+                      <div>LKR {(item.price * item.quantity).toFixed(2)}</div>
+                      {item.useDiscount && typeof item.originalPrice === 'number' && item.originalPrice > item.price && (
+                        <span className="block text-[9px] font-extrabold text-emerald-600 font-sans">
+                          (Save LKR {((item.originalPrice - item.price) * item.quantity).toFixed(2)})
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -231,93 +230,179 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
               ))}
               
               {/* Table Footer row containing "Thank you" and calculations */}
-              <tr className="border-t border-slate-300">
-                <td colSpan={2} rowSpan={4} className="py-4 px-4 italic text-slate-400 font-serif text-[11px] align-middle text-left border-r border-slate-300">
-                  Thank you for your business!
-                </td>
-                <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
-                  Subtotal
-                </td>
-                <td className="py-2 px-3.5 text-right font-mono font-bold text-slate-900 align-middle">
-                  LKR {invoice.subtotal.toFixed(2)}
-                </td>
-              </tr>
-              
-              <tr className="border-t border-slate-200">
-                <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
-                  {invoice.discountAmount > 0 ? `Discount` : 'Other'}
-                </td>
-                <td className="py-2 px-3.5 text-right font-mono font-semibold text-slate-900 align-middle">
-                  {invoice.discountAmount > 0 ? `-LKR ${invoice.discountAmount.toFixed(2)}` : '-'}
-                </td>
-              </tr>
-              
-              {invoice.deliveryCharges > 0 ? (
-                <tr className="border-t border-slate-200">
-                  <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
-                    Delivery
-                  </td>
-                  <td className="py-2 px-3.5 text-right font-mono font-semibold text-slate-900 align-middle">
-                    LKR {invoice.deliveryCharges.toFixed(2)}
-                  </td>
-                </tr>
-              ) : invoice.customCharges && invoice.customCharges.length > 0 ? (
-                <tr className="border-t border-slate-200">
-                  <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
-                    {invoice.customCharges[0].name}
-                  </td>
-                  <td className="py-2 px-3.5 text-right font-mono font-semibold text-slate-900 align-middle">
-                    LKR {invoice.customCharges[0].amount.toFixed(2)}
-                  </td>
-                </tr>
-              ) : (
-                <tr className="border-t border-slate-200">
-                  <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
-                    Delivery
-                  </td>
-                  <td className="py-2 px-3.5 text-right font-mono text-slate-400 align-middle">-</td>
-                </tr>
-              )}
+              {(() => {
+                const totalCalculationRows = (hasProductDiscount ? 4 : 2)
+                  + (invoice.discountAmount > 0 ? 1 : 0)
+                  + (invoice.deliveryCharges > 0 ? 1 : 0)
+                  + (invoice.customCharges?.length || 0);
+                return (
+                  <>
+                    {hasProductDiscount ? (
+                      <tr className="border-t border-slate-300">
+                        <td colSpan={2} rowSpan={totalCalculationRows} className="py-4 px-4 text-left border-r border-slate-300 align-top bg-slate-50/20">
+                          {invoice.customFields && invoice.customFields.length > 0 ? (
+                            <div className="space-y-2">
+                              <span className="block text-[9px] font-black uppercase tracking-widest text-slate-400 font-mono border-b border-slate-100 pb-1">
+                                Quotation Specification / Details
+                              </span>
+                              <div className="grid grid-cols-1 gap-1.5 text-[11px]">
+                                {invoice.customFields.map((field) => (
+                                  <div key={field.id} className="flex flex-row justify-between items-center border-b border-slate-50 pb-0.5 last:border-0 last:pb-0">
+                                    <span className="text-slate-500 font-bold uppercase text-[9px] tracking-wide shrink-0">{field.key}:</span>
+                                    <span className="text-slate-800 font-bold text-right font-sans">
+                                      {field.value} {field.quantity && field.quantity > 1 ? <span className="text-indigo-600 font-mono text-[9px] ml-1.5 bg-indigo-50 px-1 py-0.5 rounded font-extrabold">x{field.quantity}</span> : null}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-slate-300 italic font-mono text-[10px] align-middle text-left h-full flex items-center justify-center">
+                              &nbsp;
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
+                          Items Total
+                        </td>
+                        <td className="py-2 px-3.5 text-right font-mono font-bold text-slate-900 align-middle">
+                          LKR {(invoice.totalOriginalSubtotal ?? invoice.subtotal).toFixed(2)}
+                        </td>
+                      </tr>
+                    ) : null}
 
-              <tr className="border-t-2 border-slate-300 bg-slate-100">
-                <td className="py-2.5 px-2 border-r border-slate-200 font-black text-[10px] text-right uppercase text-slate-700 font-mono align-middle">
-                  Total Quote
-                </td>
-                <td style={{ color: qAccentColor }} className="py-2.5 px-3.5 text-right font-mono font-black text-[13px] align-middle whitespace-nowrap">
-                  LKR {invoice.total.toFixed(2)}
-                </td>
-              </tr>
+                    <tr className={hasProductDiscount ? "border-t border-slate-200" : "border-t border-slate-300"}>
+                      {!hasProductDiscount ? (
+                        <td colSpan={2} rowSpan={totalCalculationRows} className="py-4 px-4 text-left border-r border-slate-300 align-top bg-slate-50/20">
+                          {invoice.customFields && invoice.customFields.length > 0 ? (
+                            <div className="space-y-2">
+                              <span className="block text-[9px] font-black uppercase tracking-widest text-slate-400 font-mono border-b border-slate-100 pb-1">
+                                Quotation Specification / Details
+                              </span>
+                              <div className="grid grid-cols-1 gap-1.5 text-[11px]">
+                                {invoice.customFields.map((field) => (
+                                  <div key={field.id} className="flex flex-row justify-between items-center border-b border-slate-50 pb-0.5 last:border-0 last:pb-0">
+                                    <span className="text-slate-500 font-bold uppercase text-[9px] tracking-wide shrink-0">{field.key}:</span>
+                                    <span className="text-slate-800 font-bold text-right font-sans">
+                                      {field.value} {field.quantity && field.quantity > 1 ? <span className="text-indigo-600 font-mono text-[9px] ml-1.5 bg-indigo-50 px-1 py-0.5 rounded font-extrabold">x{field.quantity}</span> : null}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-slate-300 italic font-mono text-[10px] align-middle text-left h-full flex items-center justify-center">
+                              &nbsp;
+                            </div>
+                          )}
+                        </td>
+                      ) : null}
+                      {hasProductDiscount ? (
+                        <>
+                          <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-emerald-600 font-mono align-middle bg-emerald-50/10">
+                            Products Discount
+                          </td>
+                          <td className="py-2 px-3.5 text-right font-mono font-bold text-emerald-650 align-middle">
+                            -LKR {invoice.totalProductDiscount?.toFixed(2)}
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
+                            Subtotal
+                          </td>
+                          <td className="py-2 px-3.5 text-right font-mono font-bold text-slate-900 align-middle">
+                            LKR {invoice.subtotal.toFixed(2)}
+                          </td>
+                        </>
+                      )}
+                    </tr>
+
+                    {hasProductDiscount && (
+                      <tr className="border-t border-slate-200 bg-slate-50/10">
+                        <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle">
+                          Subtotal
+                        </td>
+                        <td className="py-2 px-3.5 text-right font-mono font-bold text-slate-900 align-middle">
+                          LKR {invoice.subtotal.toFixed(2)}
+                        </td>
+                      </tr>
+                    )}
+                    
+                    {invoice.discountAmount > 0 && (
+                      <tr className="border-t border-slate-200">
+                        <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
+                          Discount
+                        </td>
+                        <td className="py-2 px-3.5 text-right font-mono font-semibold text-slate-900 align-middle">
+                          -LKR {invoice.discountAmount.toFixed(2)}
+                        </td>
+                      </tr>
+                    )}
+                    
+                    {invoice.deliveryCharges > 0 && (
+                      <tr className="border-t border-slate-200">
+                        <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
+                          Delivery
+                        </td>
+                        <td className="py-2 px-3.5 text-right font-mono font-semibold text-slate-900 align-middle">
+                          LKR {invoice.deliveryCharges.toFixed(2)}
+                        </td>
+                      </tr>
+                    )}
+
+                    {invoice.customCharges && invoice.customCharges.map((charge) => (
+                      <tr key={charge.id} className="border-t border-slate-200">
+                        <td className="py-2 px-2 border-r border-slate-200 font-bold text-[10px] text-right uppercase text-slate-500 font-mono align-middle bg-slate-50">
+                          {charge.name}
+                        </td>
+                        <td className="py-2 px-3.5 text-right font-mono font-semibold text-slate-900 align-middle">
+                          LKR {charge.amount.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+
+                    <tr className="border-t-2 border-slate-300 bg-slate-100">
+                      <td className="py-2.5 px-2 border-r border-slate-200 font-black text-[10px] text-right uppercase text-slate-700 font-mono align-middle">
+                        Total Quote
+                      </td>
+                      <td style={{ color: qAccentColor }} className="py-2.5 px-3.5 text-right font-mono font-black text-[13px] align-middle whitespace-nowrap">
+                        LKR {invoice.total.toFixed(2)}
+                      </td>
+                    </tr>
+                  </>
+                );
+              })()}
             </tbody>
           </table>
         </div>
 
         {/* Disclaimer Text */}
         {qShowTerms && (
-          <>
-            <p className="text-[10px] text-slate-400 mt-6 leading-relaxed">
-              This quotation is not a contract or a bill. It is our best guess at the total price for the service and goods described above. The customer will be billed after indicating acceptance of this quote. Payment will be due prior to the delivery of service and goods.
-            </p>
-            {invoice.notes && !qShowDescriptionOfWork && (
-              <div className="mt-4 text-[10px] text-slate-600 leading-relaxed font-medium whitespace-pre-line bg-slate-50 border border-slate-150 p-2.5 rounded-xl">
-                {invoice.notes}
-              </div>
-            )}
-            {profile.defaultTermsAndConditions?.trim() && (
-              <div className="mt-4 text-[10px] text-slate-600 leading-relaxed font-medium whitespace-pre-line bg-slate-50 border border-slate-150 p-2.5 rounded-xl text-left">
-                <span className="block font-bold text-[9px] uppercase tracking-wider mb-1" style={{ color: qAccentColor }}>Terms & Conditions</span>
-                {profile.defaultTermsAndConditions.trim()}
-              </div>
-            )}
-          </>
+          <p className="text-[10px] text-slate-400 mt-4 leading-relaxed text-left">
+            This quotation is not a contract or a bill. It is our best guess at the total price for the service and goods described above. The customer will be billed after indicating acceptance of this quote. Payment will be due prior to the delivery of service and goods.
+          </p>
+        )}
+
+        {/* Description of Work block - MOVED BELOW THE TABLE */}
+        {qShowDescriptionOfWork && (
+          <div className="border border-slate-300 rounded-xl overflow-hidden mt-5 shadow-2xs bg-white text-left">
+            <div style={{ backgroundColor: '#f1f5f9' }} className="text-slate-700 border-b border-slate-200 px-3.5 py-1.5 font-bold text-[10px] tracking-wider font-mono uppercase">
+              Description of Work
+            </div>
+            <div className="p-4 text-xs text-slate-700 min-h-[50px] leading-relaxed whitespace-pre-line bg-white font-medium text-left">
+              {invoice.notes || "This estimate is for the standard supply of goods and services as listed below."}
+            </div>
+          </div>
         )}
 
         {/* Bank Payment Info Box */}
         {qShowPaymentMethod && qPaymentBankName && (
-          <div className="border border-slate-300 rounded-xl overflow-hidden mt-6 shadow-2xs bg-slate-50/20">
-            <div style={{ backgroundColor: qAccentColor }} className="text-white px-3.5 py-1.5 font-bold text-[10px] tracking-wider font-mono">
+          <div className="border border-slate-300 rounded-xl overflow-hidden mt-5 shadow-2xs bg-slate-50/20 text-left">
+            <div style={{ backgroundColor: '#f1f5f9' }} className="text-slate-700 border-b border-slate-200 px-3.5 py-1.5 font-bold text-[10px] tracking-wider font-mono">
               BANK REMITTANCE & PAYMENT DETAILS
             </div>
-            <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs font-semibold text-slate-700 bg-white text-left">
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs font-semibold text-slate-700 bg-white">
               <div>
                 <span className="block text-[9px] uppercase tracking-wider font-bold text-slate-400 mb-0.5">Bank Name</span>
                 <span className="text-slate-800 text-[11px] font-bold">{qPaymentBankName}</span>
@@ -338,32 +423,43 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
           </div>
         )}
 
-        {/* Customer Acceptance Box */}
-        {qShowAcceptance && (
-          <div className="border border-slate-300 rounded-lg overflow-hidden mt-6 shadow-2xs bg-white">
-            <div className="bg-slate-100 border-b border-slate-300 px-3 py-1.5 font-bold text-[10px] text-slate-600 uppercase tracking-wider font-mono">
-              Customer Acceptance
+        {/* Separator line before footer */}
+        <div className="border-t border-slate-200 my-6"></div>
+
+        {/* Split Signature and Contact Info Row */}
+        <div className="flex flex-col sm:flex-row justify-between items-start gap-6 text-left">
+          {/* Left Side: Empty spacer to balance layout */}
+          <div className="flex-1"></div>
+
+          {/* Right Side: Authorized Representative Signature Block */}
+          <div className="flex flex-col items-end shrink-0 min-w-[180px] text-right">
+            <span className="italic text-slate-400 text-[11px] font-serif mb-1 block">Authorized Rep:</span>
+            
+            {profile.signature ? (
+              <img 
+                src={profile.signature} 
+                alt="Authorized Signature" 
+                className="h-10 w-auto max-w-[140px] object-contain mb-1"
+                referrerPolicy="no-referrer"
+                crossOrigin={profile.signature.startsWith('data:') ? undefined : 'anonymous'}
+              />
+            ) : (
+              <div className="h-8"></div>
+            )}
+            
+            <div className="w-44 border-t border-dashed border-slate-350 my-1"></div>
+            <div className="font-extrabold text-slate-800 text-xs tracking-tight mt-0.5">
+              {profile.signatureTitle || "Sales Representative"}
             </div>
-            <div className="grid grid-cols-12 text-[10px]">
-              <div className="col-span-6 border-r border-slate-300 p-3 min-h-[50px] flex flex-col justify-between">
-                <span className="italic text-slate-300 font-serif text-xs">x</span>
-                <span className="text-slate-400 uppercase tracking-wider text-[8px] font-mono font-bold">Signature</span>
-              </div>
-              <div className="col-span-4 border-r border-slate-300 p-3 min-h-[50px] flex flex-col justify-between">
-                <span className="text-slate-200">&nbsp;</span>
-                <span className="text-slate-400 uppercase tracking-wider text-[8px] font-mono font-bold">Printed Name</span>
-              </div>
-              <div className="col-span-2 p-3 min-h-[50px] flex flex-col justify-between">
-                <span className="text-slate-200">&nbsp;</span>
-                <span className="text-slate-400 uppercase tracking-wider text-[8px] font-mono font-bold">Date</span>
-              </div>
+            <div className="text-[9px] text-slate-400 font-semibold uppercase mt-0.5 tracking-wider">
+              {profile.name}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Contact Info Footer */}
-        <div className="text-center text-[10px] text-slate-400 mt-8 pt-4 border-t border-slate-150">
-          If you have any questions, please contact <strong className="text-slate-600 font-bold">{profile.name}</strong> at <strong className="text-slate-600 font-bold">{profile.phone}</strong>{emailAddress ? <span> or via email at <strong className="text-slate-600 font-bold">{emailAddress}</strong></span> : ''}.
+        {/* Visual footer contact line */}
+        <div className="mt-8 pt-4 border-t border-slate-150 text-center text-[10.5px] text-slate-400 font-medium font-sans">
+          Contact Krypton View at +94 77 550 2671 or via email at kryptontechlk@gmail.com
         </div>
       </div>
     );
@@ -397,7 +493,7 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
 
   return (
     <div 
-      id="invoice-document"
+      id={`invoice-document-${invoice.id || 'default'}`}
       className="bg-white text-slate-800 p-8 sm:p-12 border border-slate-200 rounded-2xl max-w-3xl mx-auto premium-shadow print-card print:border-none print:shadow-none"
     >
       {/* Header Section */}
@@ -528,16 +624,18 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
         </div>
 
         <div className="space-y-3">
-          {invoice.customFields.length > 0 && (
+          {(invoice.customFields || []).length > 0 && (
             <>
               <h3 className="font-display font-bold text-[10px] tracking-wider text-slate-400 border-l-4 border-slate-300 pl-2.5 leading-none uppercase">
                 INVOICE NOTES
               </h3>
               <div className="space-y-1.5 text-xs text-slate-605 mt-2">
-                {invoice.customFields.map((field) => (
+                {(invoice.customFields || []).map((field) => (
                   <div key={field.id} className="flex items-center gap-2 min-h-[18px]">
                     <span className="text-slate-450 font-bold uppercase tracking-wider text-[9px] w-24 shrink-0 truncate">{field.key}:</span>
-                    <span className="text-slate-600 font-semibold text-xs flex-1 truncate">{field.value}</span>
+                    <span className="text-slate-600 font-semibold text-xs flex-1 truncate">
+                      {field.value} {field.quantity && field.quantity > 1 ? `(Qty: ${field.quantity})` : ''}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -592,7 +690,7 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
                           </span>
                         </div>
                       )}
-                      {item.customFields.map((f) => f.value && (
+                      {(item.customFields || []).map((f) => f.value && (
                         <div key={f.id} className="flex items-center gap-1 mt-0.5">
                           <span className="text-slate-500 font-semibold uppercase text-[9px] tracking-wider">{f.name}:</span>
                           <span className="text-slate-800 font-medium">
@@ -606,10 +704,22 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
                     {item.quantity}
                   </td>
                   <td className="py-3 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
-                    LKR {item.price.toFixed(2)}
+                    {item.useDiscount && typeof item.originalPrice === 'number' && item.originalPrice > item.price ? (
+                      <div>
+                        <span className="text-emerald-650 font-bold block">LKR {item.price.toFixed(2)}</span>
+                        <span className="line-through text-slate-400 text-[10px] block">LKR {item.originalPrice.toFixed(2)}</span>
+                      </div>
+                    ) : (
+                      <span>LKR {item.price.toFixed(2)}</span>
+                    )}
                   </td>
                   <td className="py-3 pr-1 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
-                    LKR {(item.price * item.quantity).toFixed(2)}
+                    <div>LKR {(item.price * item.quantity).toFixed(2)}</div>
+                    {item.useDiscount && typeof item.originalPrice === 'number' && item.originalPrice > item.price && (
+                      <span className="block text-[9px] font-extrabold text-emerald-600 font-sans">
+                        (Save LKR {((item.originalPrice - item.price) * item.quantity).toFixed(2)})
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))
@@ -621,9 +731,22 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
       {/* Calculations & Summary Section */}
       <div className="flex flex-row justify-end items-stretch gap-6 pt-3 border-t border-slate-150">
         <div className="w-80 space-y-2 text-xs">
+          {hasProductDiscount ? (
+            <>
+              <div className="flex justify-between items-center text-slate-500">
+                <span>Items Total:</span>
+                <span className="font-mono text-slate-800">LKR {(invoice.totalOriginalSubtotal ?? invoice.subtotal).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center text-emerald-600 font-medium">
+                <span>Products Discount:</span>
+                <span className="font-mono">- LKR {invoice.totalProductDiscount?.toFixed(2)}</span>
+              </div>
+            </>
+          ) : null}
+
           <div className="flex justify-between items-center text-slate-500">
-            <span>Subtotal:</span>
-            <span className="font-mono text-slate-800">LKR {invoice.subtotal.toFixed(2)}</span>
+            <span>{hasProductDiscount ? 'Subtotal (After Product Discount):' : 'Subtotal:'}</span>
+            <span className="font-mono text-slate-800 font-bold">LKR {invoice.subtotal.toFixed(2)}</span>
           </div>
           
           {invoice.discountValue > 0 && (
@@ -683,31 +806,8 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
         </div>
       )}
 
-      {/* Invoice Acceptance Box (Optional) */}
-      {iShowAcceptance && (
-        <div className="border border-slate-300 rounded-lg overflow-hidden mt-6 shadow-2xs bg-white">
-          <div className="bg-slate-100 border-b border-slate-300 px-3 py-1.5 font-bold text-[10px] text-slate-600 uppercase tracking-wider font-mono">
-            Customer Acknowledgment & Receipt
-          </div>
-          <div className="grid grid-cols-12 text-[10px]">
-            <div className="col-span-6 border-r border-slate-300 p-3 min-h-[50px] flex flex-col justify-between">
-              <span className="italic text-slate-300 font-serif text-xs">x</span>
-              <span className="text-slate-400 uppercase tracking-wider text-[8px] font-mono font-bold">Signature</span>
-            </div>
-            <div className="col-span-4 border-r border-slate-300 p-3 min-h-[50px] flex flex-col justify-between">
-              <span className="text-slate-200">&nbsp;</span>
-              <span className="text-slate-400 uppercase tracking-wider text-[8px] font-mono font-bold">Printed Name</span>
-            </div>
-            <div className="col-span-2 p-3 min-h-[50px] flex flex-col justify-between">
-              <span className="text-slate-200">&nbsp;</span>
-              <span className="text-slate-400 uppercase tracking-wider text-[8px] font-mono font-bold">Date</span>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Invoice Footer Note & Signature Section */}
-      <div className="mt-10 pt-5 border-t border-slate-100 flex flex-row justify-between items-end gap-6 text-left">
+      <div className="mt-10 pt-5 border-t border-slate-100 flex flex-row justify-between items-start gap-6 text-left">
         {iShowTerms && (invoice.notes || profile.defaultTermsAndConditions?.trim()) ? (
           <div className="flex-1 max-w-md">
             <div style={{ color: iAccentColor }} className="text-[9px] font-bold uppercase tracking-wider mb-1">
@@ -720,9 +820,7 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
             </div>
           </div>
         ) : (
-          <div className="text-[10px] text-slate-400 italic max-w-sm leading-relaxed self-end">
-            "Thank you for your business! Please keep this copy for your records."
-          </div>
+          <div className="flex-1"></div>
         )}
         
         {/* Dynamic Signature Stamp */}
@@ -745,6 +843,11 @@ export default function InvoiceDocument({ invoice, profile, isQuotation }: Invoi
             </span>
           </div>
         )}
+      </div>
+
+      {/* Visual footer contact line */}
+      <div className="mt-8 pt-4 border-t border-slate-150 text-center text-[10.5px] text-slate-400 font-medium font-sans">
+        Contact Krypton View at +94 77 550 2671 or via email at kryptontechlk@gmail.com
       </div>
     </div>
   );
